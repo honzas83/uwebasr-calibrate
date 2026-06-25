@@ -108,12 +108,10 @@ def main():
     parser.add_argument("--seed", type=int, default=13, help="Random seed")
     parser.add_argument("--split-group", choices=["speaker", "utterance"], default="speaker", help="Group key for train/test split")
     parser.add_argument("--skip-bad-rows", action="store_true", help="Skip rows with missing audio, empty references, etc.")
+    parser.add_argument("--limit", type=int, default=None, help="Limit number of utterances to process for debugging")
     
     args = parser.parse_args()
     
-    # 1. Output directory setup
-    output_dir = Path(args.output-dir.replace("-", "_") if hasattr(args, "output_dir") else args.output_dir)
-    # Wait, argparse converts dashes to underscores, so output-dir is args.output_dir
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
@@ -147,6 +145,9 @@ def main():
         logger.info(f"Loading manifest: {args.dataset}")
         rows = load_manifest(args.dataset, skip_bad_rows=args.skip_bad_rows)
         logger.info(f"Loaded {len(rows)} utterances from manifest.")
+        if args.limit is not None:
+            logger.info(f"Limiting execution to first {args.limit} utterances for debugging.")
+            rows = rows[:args.limit]
     except Exception as e:
         logger.error(f"Failed to load manifest: {e}")
         sys.exit(1)
@@ -161,10 +162,16 @@ def main():
             executor.submit(process_utterance, row, url, cache_dir, 90, 7): row
             for row in rows
         }
+        total_utts = len(futures)
+        completed_count = 0
+        log_interval = 1 if total_utts <= 20 else (5 if total_utts <= 100 else 10)
         for fut in as_completed(futures):
             utt_id, success, data = fut.result()
+            completed_count += 1
             if success:
                 asr_results[utt_id] = data
+                if completed_count % log_interval == 0 or completed_count == total_utts:
+                    logger.info(f"ASR progress: {completed_count}/{total_utts} utterances processed.")
             else:
                 failed_recognition.append((utt_id, data))
                 logger.error(f"Recognition failed for {utt_id}: {data}")

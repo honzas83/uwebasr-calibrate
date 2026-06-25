@@ -268,10 +268,12 @@ def run_calibration_workflow(args):
             logger.error("Pre-segmentation produced 0 segments. Cannot calibrate.")
             raise ValueError("Pre-segmentation produced 0 segments. Cannot calibrate.")
             
-        segment_variants = max(1, round(args.target_segments / estimated_per_variant))
+        target_segments_total = args.target_segments * n_datasets
+        segment_variants = max(1, round(target_segments_total / estimated_per_variant))
         logger.info(
             f"Pre-segmentation produced {estimated_per_variant} segments/variant. "
-            f"Target is {args.target_segments} segments. Computed variant count: {segment_variants}"
+            f"Target is {target_segments_total} segments ({args.target_segments} per dataset). "
+            f"Computed variant count: {segment_variants}"
         )
         
         # Actual segmentation

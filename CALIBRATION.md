@@ -429,7 +429,7 @@ This is the default value for `--target-segments`.
 Here, "balanced" means that the script adjusts the number of random
 segmentation variants so that each language or calibration set has
 approximately this number of word-aligned segments after segmentation, not the
-same number of original utterances. The current working target corresponds to:
+same number of original utterances. For a multi-dataset run, the target is scaled by the number of datasets to ensure enough segments are generated for each language. The target corresponds to:
 
 ```text
 about 8000 total segments per language
@@ -437,14 +437,17 @@ about 6000 training segments per language
 ```
 
 The implementation should estimate the number of variants from a short
-pre-segmentation pass. A practical rule is:
+pre-segmentation pass over the combined dataset. The variant count is computed as:
 
 ```text
+target_segments_total =
+    target_segments_per_language * number_of_datasets
+
 estimated_segments_per_variant =
-    number of accepted word-aligned segments produced by one random segmentation
+    number of accepted word-aligned segments produced by one random segmentation on the combined set
 
 segment_variants =
-    max(1, round(target_segments_per_language / estimated_segments_per_variant))
+    max(1, round(target_segments_total / estimated_segments_per_variant))
 ```
 
 The script should then perform the actual segmentation with this value and

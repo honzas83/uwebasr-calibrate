@@ -114,6 +114,18 @@ uwebasr-calibrate \
 ```
 
 
+### Running a Multi-Model Calibration Setup
+
+To run calibration on multiple datasets and endpoints in a single command (multi-model setup), you can specify the `--dataset`, `--uwebasr-url`, and `--output-dir` parameters multiple times. The script will run each calibration sequentially:
+
+```bash
+uwebasr-calibrate \
+  --dataset datasets/cs/ref.json --uwebasr-url https://uwebasr.zcu.cz/api/v2/speechcloud/generic/cs/zipformer --output-dir output_cs \
+  --dataset datasets/de/ref.json --uwebasr-url https://uwebasr.zcu.cz/api/v2/speechcloud/generic/de/zipformer --output-dir output_de \
+  --jobs 6
+```
+
+
 ### Running on All Datasets
 
 A helper script `calibrate_all.sh` is provided to run calibration for all four languages (Czech, German, English, Slovak) with their matching endpoints:

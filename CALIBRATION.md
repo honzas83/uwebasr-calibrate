@@ -39,6 +39,19 @@ uwebasr-calibrate \
   --seed 13
 ```
 
+Alternatively, to support running multiple dataset-model configurations in a single run (multi-model setup), you can specify the `--dataset`, `--uwebasr-url`, and `--output-dir` arguments multiple times. The script will run them sequentially, associating arguments by their order:
+
+```text
+uwebasr-calibrate \
+  --dataset datasets/cs/ref.json --uwebasr-url https://uwebasr.zcu.cz/api/v2/speechcloud/generic/cs/zipformer --output-dir output_cs \
+  --dataset datasets/de/ref.json --uwebasr-url https://uwebasr.zcu.cz/api/v2/speechcloud/generic/de/zipformer --output-dir output_de \
+  --target-segments 8000 \
+  --jobs 6 \
+  --seed 13
+```
+
+All other parameters (such as `--target-segments`, `--jobs`, `--seed`, `--split-group`, `--skip-bad-rows`, etc.) act as global configuration values applied to all specified tasks.
+
 The `--uwebasr-url` argument is the complete model endpoint URL. Users normally
 pass it without the `format` query parameter. The script requests:
 

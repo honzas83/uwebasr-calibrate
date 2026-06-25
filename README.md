@@ -78,7 +78,7 @@ pip install -e .
 
 ## Usage
 
-Run calibration on a single dataset manifest:
+Run calibration on a single dataset manifest (for the required structure, see [DATASET.md](DATASET.md)):
 
 ```bash
 uwebasr-calibrate \

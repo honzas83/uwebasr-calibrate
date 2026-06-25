@@ -145,6 +145,7 @@ def run_calibration_workflow(args):
                         r["utt_id"] = f"{utt_id}_ds{i}"
                         utt_id = r["utt_id"]
                     utt_to_url[utt_id] = url
+                    r["dataset_idx"] = i
                     all_rows.append(r)
             except Exception as e:
                 logger.error(f"Failed to load manifest {dataset_path}: {e}")
@@ -258,34 +259,44 @@ def run_calibration_workflow(args):
             logger.error(f"Dataset split failed: {e}")
             raise e
             
-        # 6. Balanced Word-aligned Segmentation
-        logger.info("Running pre-segmentation pass to estimate variant count...")
-        # Pre-segmentation pass using 1 variant on all rows
-        pre_segments = run_segmentation(filtered_rows, asr_results, seed=args.seed, variant_index=0)
-        estimated_per_variant = len(pre_segments)
-        
-        if estimated_per_variant == 0:
-            logger.error("Pre-segmentation produced 0 segments. Cannot calibrate.")
-            raise ValueError("Pre-segmentation produced 0 segments. Cannot calibrate.")
-            
-        target_segments_total = args.target_segments * n_datasets
-        segment_variants = max(1, round(target_segments_total / estimated_per_variant))
-        logger.info(
-            f"Pre-segmentation produced {estimated_per_variant} segments/variant. "
-            f"Target is {target_segments_total} segments ({args.target_segments} per dataset). "
-            f"Computed variant count: {segment_variants}"
-        )
-        
-        # Actual segmentation
-        logger.info("Generating segments for train and test splits...")
+        # 6. Balanced Word-aligned Segmentation per dataset
+        logger.info(f"Running balanced segmentation targeting {args.target_segments} segments per dataset/language...")
         train_segments = []
         test_segments = []
+        dataset_variants = {}
         
-        for v in range(segment_variants):
-            train_segments.extend(run_segmentation(train_rows, asr_results, seed=args.seed, variant_index=v))
-            test_segments.extend(run_segmentation(test_rows, asr_results, seed=args.seed, variant_index=v))
+        for i in range(n_datasets):
+            ds_filtered_rows = [r for r in filtered_rows if r.get("dataset_idx") == i]
+            ds_train_rows = [r for r in train_rows if r.get("dataset_idx") == i]
+            ds_test_rows = [r for r in test_rows if r.get("dataset_idx") == i]
             
-        logger.info(f"Segment count: train_segments={len(train_segments)}, test_segments={len(test_segments)}")
+            if not ds_filtered_rows:
+                logger.warning(f"Dataset {i+1} has no valid rows after filtering. Skipping segmentation.")
+                continue
+                
+            # Pre-segmentation pass for this dataset
+            ds_pre_segments = run_segmentation(ds_filtered_rows, asr_results, seed=args.seed, variant_index=0)
+            ds_estimated_per_variant = len(ds_pre_segments)
+            
+            if ds_estimated_per_variant == 0:
+                logger.warning(f"Dataset {i+1} pre-segmentation produced 0 segments. Skipping.")
+                continue
+                
+            ds_variants = max(1, round(args.target_segments / ds_estimated_per_variant))
+            dataset_variants[i] = ds_variants
+            
+            logger.info(
+                f"Dataset {i+1} ({args.dataset[i]}): "
+                f"Pre-segmentation produced {ds_estimated_per_variant} segments/variant. "
+                f"Target is {args.target_segments} segments. Computed variant count: {ds_variants}"
+            )
+            
+            # Generate actual segments for this dataset
+            for v in range(ds_variants):
+                train_segments.extend(run_segmentation(ds_train_rows, asr_results, seed=args.seed, variant_index=v))
+                test_segments.extend(run_segmentation(ds_test_rows, asr_results, seed=args.seed, variant_index=v))
+                
+        logger.info(f"Total segment count: train_segments={len(train_segments)}, test_segments={len(test_segments)}")
         
         # Save segments.csv
         segments_records = []
@@ -543,7 +554,7 @@ def run_calibration_workflow(args):
                 "train_fraction": 0.8,
                 "ensemble_train_size": 64000,
                 "ensemble_test_size": 16000,
-                "segment_variants": segment_variants
+                "segment_variants": dataset_variants
             },
             "selected_hyperparameters": best_params,
             "affine_calibration": {

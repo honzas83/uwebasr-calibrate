@@ -360,7 +360,11 @@ suffix.
 ## Train, Test, and Test-Real Split
 
 The train/test split is performed before segmentation and before ensemble
-sampling. The split is group-disjoint by speaker, using:
+sampling. If a dataset is already split, the user can either:
+- Provide an explicit `split` field in the manifest rows (with values `train` or `test`).
+- Supply a separate test dataset manifest via the `--test-dataset` command-line argument.
+
+If no pre-defined split is provided, the split is performed automatically as a group-disjoint split by speaker, using:
 
 ```text
 train_fraction = 0.8
@@ -373,7 +377,7 @@ train and test group lists. No speaker may appear in both train and test. This
 constraint also applies to derived segments and ensemble samples, because they
 are generated only after the speaker split. If fewer than two groups are
 available, the workflow must stop unless the user explicitly requests an
-utterance-level split.
+utterance-level split or a pre-defined split is used.
 
 The held-out speaker partition is used in two ways:
 

@@ -107,7 +107,8 @@ def load_manifest(manifest_path, skip_bad_rows=False):
                 "audio_path": str(audio_path),
                 "reference": reference,
                 "speaker_id": str(speaker_id) if speaker_id else None,
-                "video_id": str(video_id) if video_id else None
+                "video_id": str(video_id) if video_id else None,
+                "split": str(item.get("split")) if item.get("split") else None
             })
             
         except Exception as e:

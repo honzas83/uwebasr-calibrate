@@ -109,6 +109,7 @@ def main():
     parser.add_argument("--split-group", choices=["speaker", "utterance"], default="speaker", help="Group key for train/test split")
     parser.add_argument("--skip-bad-rows", action="store_true", help="Skip rows with missing audio, empty references, etc.")
     parser.add_argument("--limit", type=int, default=None, help="Limit number of utterances to process for debugging")
+    parser.add_argument("--test-dataset", default=None, help="Path to test dataset manifest (if dataset is already split)")
     
     args = parser.parse_args()
     
@@ -141,13 +142,34 @@ def main():
         sys.exit(1)
         
     # 2. Load manifest
+    original_train_rows = []
+    original_test_rows = []
+    has_test_dataset = False
+    
     try:
-        logger.info(f"Loading manifest: {args.dataset}")
-        rows = load_manifest(args.dataset, skip_bad_rows=args.skip_bad_rows)
-        logger.info(f"Loaded {len(rows)} utterances from manifest.")
-        if args.limit is not None:
-            logger.info(f"Limiting execution to first {args.limit} utterances for debugging.")
-            rows = rows[:args.limit]
+        if args.test_dataset:
+            has_test_dataset = True
+            logger.info(f"Loading train manifest: {args.dataset}")
+            original_train_rows = load_manifest(args.dataset, skip_bad_rows=args.skip_bad_rows)
+            logger.info(f"Loaded {len(original_train_rows)} train utterances.")
+            
+            logger.info(f"Loading test manifest: {args.test_dataset}")
+            original_test_rows = load_manifest(args.test_dataset, skip_bad_rows=args.skip_bad_rows)
+            logger.info(f"Loaded {len(original_test_rows)} test utterances.")
+            
+            if args.limit is not None:
+                logger.info(f"Limiting execution to first {args.limit} train and test utterances for debugging.")
+                original_train_rows = original_train_rows[:args.limit]
+                original_test_rows = original_test_rows[:args.limit]
+                
+            rows = original_train_rows + original_test_rows
+        else:
+            logger.info(f"Loading manifest: {args.dataset}")
+            rows = load_manifest(args.dataset, skip_bad_rows=args.skip_bad_rows)
+            logger.info(f"Loaded {len(rows)} utterances from manifest.")
+            if args.limit is not None:
+                logger.info(f"Limiting execution to first {args.limit} utterances for debugging.")
+                rows = rows[:args.limit]
     except Exception as e:
         logger.error(f"Failed to load manifest: {e}")
         sys.exit(1)
@@ -225,13 +247,50 @@ def main():
     filtered_rows = [r for r in rows if r["utt_id"] in valid_utt_ids]
     
     # 5. Split rows by speaker/group
+    from uwebasr_calibrate.data import get_speaker_id, get_video_id
+    
     try:
-        train_rows, test_rows, train_speakers, test_speakers = split_dataset(
-            filtered_rows, train_fraction=0.8, seed=args.seed, split_group=args.split_group
-        )
-        logger.info(f"Split completed. Train: {len(train_rows)} utterances. Test: {len(test_rows)} utterances.")
-        if args.split_group == "speaker":
-            logger.info(f"Train speakers: {len(train_speakers)}. Test speakers: {len(test_speakers)}")
+        if has_test_dataset:
+            logger.info("Using pre-defined split from separate train and test manifest files.")
+            train_rows = [r for r in original_train_rows if r["utt_id"] in valid_utt_ids]
+            test_rows = [r for r in original_test_rows if r["utt_id"] in valid_utt_ids]
+            
+            for r in train_rows:
+                r["speaker_id"] = get_speaker_id(r["utt_id"], r.get("speaker_id"))
+                r["video_id"] = get_video_id(r["utt_id"], r.get("video_id"))
+            for r in test_rows:
+                r["speaker_id"] = get_speaker_id(r["utt_id"], r.get("speaker_id"))
+                r["video_id"] = get_video_id(r["utt_id"], r.get("video_id"))
+                
+            train_speakers = list(set(r["speaker_id"] for r in train_rows if r["speaker_id"] is not None))
+            test_speakers = list(set(r["speaker_id"] for r in test_rows if r["speaker_id"] is not None))
+            
+            logger.info(f"Split verified. Train: {len(train_rows)} utterances. Test: {len(test_rows)} utterances.")
+        else:
+            has_explicit_split = any("split" in r and r["split"] in ["train", "test"] for r in filtered_rows)
+            if has_explicit_split:
+                logger.info("Using pre-defined split from 'split' column in the manifest.")
+                train_rows = [r for r in filtered_rows if r.get("split") == "train"]
+                test_rows = [r for r in filtered_rows if r.get("split") == "test"]
+                
+                for r in train_rows:
+                    r["speaker_id"] = get_speaker_id(r["utt_id"], r.get("speaker_id"))
+                    r["video_id"] = get_video_id(r["utt_id"], r.get("video_id"))
+                for r in test_rows:
+                    r["speaker_id"] = get_speaker_id(r["utt_id"], r.get("speaker_id"))
+                    r["video_id"] = get_video_id(r["utt_id"], r.get("video_id"))
+                    
+                train_speakers = list(set(r["speaker_id"] for r in train_rows if r["speaker_id"] is not None))
+                test_speakers = list(set(r["speaker_id"] for r in test_rows if r["speaker_id"] is not None))
+                
+                logger.info(f"Split verified. Train: {len(train_rows)} utterances. Test: {len(test_rows)} utterances.")
+            else:
+                train_rows, test_rows, train_speakers, test_speakers = split_dataset(
+                    filtered_rows, train_fraction=0.8, seed=args.seed, split_group=args.split_group
+                )
+                logger.info(f"Split completed. Train: {len(train_rows)} utterances. Test: {len(test_rows)} utterances.")
+                if args.split_group == "speaker":
+                    logger.info(f"Train speakers: {len(train_speakers)}. Test speakers: {len(test_speakers)}")
     except Exception as e:
         logger.error(f"Dataset split failed: {e}")
         sys.exit(1)

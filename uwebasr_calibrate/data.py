@@ -423,35 +423,38 @@ def sample_ensemble_single(deciles, target_words, min_segments, rng):
         
     return chosen_segs
 
-def _generate_single_sample(i, deciles, seed, target_words, min_segments):
-    sample_seed = int((seed + i * 2026) % (2**32))
-    sample_rng = np.random.RandomState(sample_seed)
-    
-    chosen_segs = sample_ensemble_single(deciles, target_words, min_segments, sample_rng)
-    
-    # Concatenate CTC tokens and probs
-    tokens_all = []
-    probs_all = []
-    edit_errors = 0
-    ref_words = 0
-    
-    for seg in chosen_segs:
-        tokens_all.extend(seg["ctc_tokens"])
-        probs_all.extend(seg["ctc_probs"])
-        edit_errors += seg["edit_errors"]
-        ref_words += seg["reference_words"]
+def _generate_ensemble_batch(batch_indices, deciles, seed, target_words, min_segments):
+    batch_samples = []
+    for i in batch_indices:
+        sample_seed = int((seed + i * 2026) % (2**32))
+        sample_rng = np.random.RandomState(sample_seed)
         
-    accuracy = max(0.0, 1.0 - edit_errors / ref_words)
-    
-    # Extract features
-    features = extract_features(tokens_all, probs_all)
-    
-    return {
-        "sample_id": f"sample_{i}",
-        "accuracy": accuracy,
-        "ref_words": ref_words,
-        "features": features
-    }
+        chosen_segs = sample_ensemble_single(deciles, target_words, min_segments, sample_rng)
+        
+        # Concatenate CTC tokens and probs
+        tokens_all = []
+        probs_all = []
+        edit_errors = 0
+        ref_words = 0
+        
+        for seg in chosen_segs:
+            tokens_all.extend(seg["ctc_tokens"])
+            probs_all.extend(seg["ctc_probs"])
+            edit_errors += seg["edit_errors"]
+            ref_words += seg["reference_words"]
+            
+        accuracy = max(0.0, 1.0 - edit_errors / ref_words)
+        
+        # Extract features
+        features = extract_features(tokens_all, probs_all)
+        
+        batch_samples.append({
+            "sample_id": f"sample_{i}",
+            "accuracy": accuracy,
+            "ref_words": ref_words,
+            "features": features
+        })
+    return batch_samples
 
 def generate_ensemble_samples(segments, sample_count, seed, n_jobs=1, target_words=512, min_segments=2):
     """
@@ -463,11 +466,22 @@ def generate_ensemble_samples(segments, sample_count, seed, n_jobs=1, target_wor
         
     logger.info(f"Formed {len(deciles)} non-empty quantiles for ensemble sampling")
     
-    samples = Parallel(n_jobs=n_jobs)(
-        delayed(_generate_single_sample)(i, deciles, seed, target_words, min_segments)
-        for i in range(sample_count)
-    )
-    
+    if n_jobs == 1:
+        # Avoid multiprocessing overhead entirely for single job
+        samples = _generate_ensemble_batch(range(sample_count), deciles, seed, target_words, min_segments)
+    else:
+        # Split sample indices into n_jobs * 4 batches to balance load and minimize IPC overhead
+        num_batches = max(1, n_jobs * 4)
+        indices_batches = np.array_split(range(sample_count), num_batches)
+        
+        results = Parallel(n_jobs=n_jobs)(
+            delayed(_generate_ensemble_batch)(batch, deciles, seed, target_words, min_segments)
+            for batch in indices_batches
+        )
+        
+        # Flatten results list of lists
+        samples = [s for batch_result in results for s in batch_result]
+        
     return samples, len(deciles)
 
 def get_test_real_windows(test_rows, asr_results):

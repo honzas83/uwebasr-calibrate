@@ -110,3 +110,14 @@ A helper script `calibrate_all.sh` is provided to run calibration for all four l
 ```bash
 ./calibrate_all.sh
 ```
+
+---
+
+## LINDAT/CLARIAH-CZ Support & References
+
+UWebASR is developed by the Department of Cybernetics at the University of West Bohemia in Pilsen and is integrated into the [LINDAT/CLARIAH-CZ](https://lindat.cz) research infrastructure.
+
+If you use this software or the UWebASR services in your research, please cite the following reference:
+
+- ŠVEC, Jan; LEHEČKA, Jan a IRCING, Pavel. *Current State of the UWebASR - Web-Based ASR Service for Czech, Slovak, German, and English*. CLARIN, 2025. ISSN 2773-2177.
+

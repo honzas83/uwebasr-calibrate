@@ -344,8 +344,14 @@ def run_calibration_workflow(args):
         
         # 7. Generate ensemble samples (64k train, 16k test)
         logger.info("Generating ensemble samples...")
-        train_samples, train_deciles_count = generate_ensemble_samples(train_segments, 64000, seed=args.seed, n_jobs=args.jobs)
-        test_samples, test_deciles_count = generate_ensemble_samples(test_segments, 16000, seed=args.seed, n_jobs=args.jobs)
+        train_samples, train_deciles_count = generate_ensemble_samples(
+            train_segments, 64000, seed=args.seed, n_jobs=args.jobs,
+            min_words=args.ensemble_min_words, max_words=args.ensemble_max_words, min_segments=args.ensemble_min_segments
+        )
+        test_samples, test_deciles_count = generate_ensemble_samples(
+            test_segments, 16000, seed=args.seed, n_jobs=args.jobs,
+            min_words=args.ensemble_min_words, max_words=args.ensemble_max_words, min_segments=args.ensemble_min_segments
+        )
         
         logger.info("Extracted features for ensemble samples.")
         
@@ -404,7 +410,8 @@ def run_calibration_workflow(args):
         
         # 11. Evaluate test_real (Windowed prediction on held-out speaker/group material)
         logger.info("Running test_real windowed evaluation...")
-        windows_by_group = get_test_real_windows(test_rows, asr_results)
+        test_real_window_size = (args.ensemble_min_words + args.ensemble_max_words) // 2
+        windows_by_group = get_test_real_windows(test_rows, asr_results, window_size=test_real_window_size)
         
         test_real_window_records = []
         test_real_group_records = []
@@ -575,9 +582,9 @@ def run_calibration_workflow(args):
                 "train_fraction": 0.8,
                 "ensemble_train_size": 64000,
                 "ensemble_test_size": 16000,
-                "ensemble_min_words": 128,
-                "ensemble_max_words": 1024,
-                "ensemble_min_segments": 1,
+                "ensemble_min_words": args.ensemble_min_words,
+                "ensemble_max_words": args.ensemble_max_words,
+                "ensemble_min_segments": args.ensemble_min_segments,
                 "segment_variants": dataset_variants
             },
             "selected_hyperparameters": best_params,
@@ -605,6 +612,9 @@ def run_calibration_workflow(args):
             "seed": args.seed,
             "split_group": args.split_group,
             "loss": args.loss,
+            "ensemble_min_words": args.ensemble_min_words,
+            "ensemble_max_words": args.ensemble_max_words,
+            "ensemble_min_segments": args.ensemble_min_segments,
             "skip_bad_rows": args.skip_bad_rows,
             "train_speakers": train_speakers,
             "test_speakers": test_speakers,
@@ -676,7 +686,8 @@ def run_calibration_workflow(args):
                 else:
                     # Generate test ensemble samples for this dataset
                     ds_test_samples, _ = generate_ensemble_samples(
-                        ds_test_segments, 16000, seed=args.seed, n_jobs=args.jobs
+                        ds_test_segments, 16000, seed=args.seed, n_jobs=args.jobs,
+                        min_words=args.ensemble_min_words, max_words=args.ensemble_max_words, min_segments=args.ensemble_min_segments
                     )
                     
                     X_ds_test = np.array([s["features"] for s in ds_test_samples])
@@ -789,6 +800,9 @@ def main():
     parser.add_argument("--seed", type=int, default=13, help="Random seed")
     parser.add_argument("--split-group", choices=["speaker", "utterance"], default="speaker", help="Group key for train/test split")
     parser.add_argument("--loss", choices=["mae", "mse"], default="mae", help="Loss function / optimization criterion for training the calibration model")
+    parser.add_argument("--ensemble-min-words", type=int, default=512, help="Minimum number of reference words per ensemble sample")
+    parser.add_argument("--ensemble-max-words", type=int, default=512, help="Maximum number of reference words per ensemble sample")
+    parser.add_argument("--ensemble-min-segments", type=int, default=2, help="Minimum number of segments per ensemble sample")
     parser.add_argument("--skip-bad-rows", action="store_true", help="Skip rows with missing audio, empty references, etc.")
     parser.add_argument("--limit", type=int, default=None, help="Limit number of utterances to process for debugging")
     

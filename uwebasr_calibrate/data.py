@@ -490,9 +490,9 @@ def generate_ensemble_samples(segments, sample_count, seed, n_jobs=1, min_words=
         
     return samples, len(deciles)
 
-def get_test_real_windows(test_rows, asr_results):
+def get_test_real_windows(test_rows, asr_results, window_size=512):
     """
-    Converts test_rows into test_real speaker/group windows of approx 512 words.
+    Converts test_rows into test_real speaker/group windows of approx window_size words.
     Returns window data ready for feature extraction.
     """
     # Group by group_id
@@ -507,7 +507,7 @@ def get_test_real_windows(test_rows, asr_results):
         # Sort by utt_id for determinism
         group = sorted(group, key=lambda r: r["utt_id"])
         
-        # Generate at-most-512 spans for each utterance, and slice them
+        # Generate at-most-window_size spans for each utterance, and slice them
         group_chunks = []
         for row in group:
             utt_id = row["utt_id"]
@@ -517,11 +517,11 @@ def get_test_real_windows(test_rows, asr_results):
             ref_words = normalize_text(row["reference"])
             num_ref_words = len(ref_words)
             
-            # Slices for test_real windowing (approx 512 words chunks)
+            # Slices for test_real windowing (approx window_size words chunks)
             ref_spans = []
             curr = 0
             while curr < num_ref_words:
-                end = min(curr + 512, num_ref_words)
+                end = min(curr + window_size, num_ref_words)
                 ref_spans.append((curr, end))
                 curr = end
                 
@@ -539,7 +539,7 @@ def get_test_real_windows(test_rows, asr_results):
             )
             group_chunks.extend(chunks)
             
-        # Accumulate chunks into approx 512-word windows
+        # Accumulate chunks into approx window_size-word windows
         windows = []
         current_window = []
         current_words = 0
@@ -548,13 +548,13 @@ def get_test_real_windows(test_rows, asr_results):
             current_window.append(chunk)
             current_words += chunk["reference_words"]
             
-            if current_words >= 512:
+            if current_words >= window_size:
                 windows.append(current_window)
                 current_window = []
                 current_words = 0
                 
         # Remainder
-        if current_words >= 10:
+        if current_words >= min(10, window_size):
             windows.append(current_window)
             
         windows_by_group[gid] = windows

@@ -532,13 +532,16 @@ with neighbouring held-out utterances from the same speaker/group.
 
 The model is trained on ensemble samples rather than on individual utterances.
 An ensemble sample is a set of word-aligned segments sampled with replacement
-until it contains enough reference words (drawn uniformly at random for each sample):
+until it contains enough reference words. The target size is drawn uniformly at random for each sample between `--ensemble-min-words` and `--ensemble-max-words`.
 
 ```text
-min_words = 128
-max_words = 1024
-min_segments = 1
+--ensemble-min-words (default: 512)
+--ensemble-max-words (default: 512)
+--ensemble-min-segments (default: 2)
 ```
+
+For the windowing of `test_real` evaluations, the window size is set to the midpoint between `--ensemble-min-words` and `--ensemble-max-words`: `(ensemble_min_words + ensemble_max_words) // 2`.
+
 
 The target accuracy for an ensemble is computed exactly from accumulated edit
 errors and accumulated reference words:
@@ -1099,7 +1102,7 @@ The script should execute these stages:
 4. Split rows by speaker into train and held-out test.
 5. Estimate the number of segmentation variants from the target segment count.
 6. Generate word-aligned segment variants and report the resulting counts.
-7. Generate ensemble samples (randomly sized between 128 and 1024 words) with 75/25 accuracy-decile mixture sampling.
+7. Generate ensemble samples (sized according to --ensemble-min-words / --ensemble-max-words) with 75/25 accuracy-decile mixture sampling.
 8. Extract the top-20 CTC confidence features.
 9. Train HGBR models with train-internal hyperparameter search.
 10. Fit the affine calibration on training predictions.

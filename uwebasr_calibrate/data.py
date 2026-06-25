@@ -255,7 +255,7 @@ def slice_utterance(utt_id, reference, word_array, word_times, ctc_tokens, ctc_p
             hyp_words.append(tok)
             hyp_word_to_original_idx.append(idx)
             
-    if not ref_words:
+    if not ref_words or not hyp_words:
         return []
         
     ref_to_hyp = align_ref_and_hyp(ref_words, hyp_words)
@@ -270,12 +270,16 @@ def slice_utterance(utt_id, reference, word_array, word_times, ctc_tokens, ctc_p
         hyp_start = min(hyp_indices)
         hyp_end = max(hyp_indices) + 1
         
-        if hyp_start >= hyp_end:
+        # Clamp to valid hypothesis indices
+        hyp_start = max(0, min(hyp_start, len(hyp_words) - 1))
+        hyp_end_idx = max(0, min(hyp_end - 1, len(hyp_words) - 1))
+        
+        if hyp_start > hyp_end_idx:
             continue
             
         # Get start and end times
         orig_start = hyp_word_to_original_idx[hyp_start]
-        orig_end = hyp_word_to_original_idx[hyp_end - 1]
+        orig_end = hyp_word_to_original_idx[hyp_end_idx]
         
         start_time = word_times[orig_start][0]
         end_time = word_times[orig_end][1]

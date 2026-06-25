@@ -98,6 +98,22 @@ def safe_pearsonr(x, y):
     corr, _ = pearsonr(x, y)
     return float(corr) if np.isfinite(corr) else None
 
+def get_dataset_label(dataset_paths, index):
+    path = Path(dataset_paths[index])
+    name = path.parent.name
+    if not name or name == ".":
+        name = path.stem
+    names = []
+    for p in dataset_paths:
+        p_path = Path(p)
+        p_name = p_path.parent.name
+        if not p_name or p_name == ".":
+            p_name = p_path.stem
+        names.append(p_name)
+    if name and names.count(name) == 1:
+        return name
+    return f"dataset_{index}"
+
 def run_calibration_workflow(args):
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -615,6 +631,131 @@ def run_calibration_workflow(args):
         with open(output_dir / "metrics.json", "w", encoding="utf-8") as f:
             json.dump(metrics, f, indent=2, ensure_ascii=False)
             
+        # 17. Dataset-specific reports for multi-dataset scenario
+        if n_datasets > 1:
+            logger.info("Generating dataset-specific reports for multi-dataset scenario...")
+            # Map group_id to dataset_idx
+            group_to_dataset = {r["group_id"]: r["dataset_idx"] for r in filtered_rows if r.get("group_id") is not None}
+            
+            for i in range(n_datasets):
+                # Determine dataset directory name/label
+                dataset_label = get_dataset_label(args.dataset, i)
+                ds_output_dir = output_dir / dataset_label
+                ds_output_dir.mkdir(parents=True, exist_ok=True)
+                
+                # Filter this dataset's test segments
+                ds_test_rows = [r for r in test_rows if r.get("dataset_idx") == i]
+                
+                # Check how many variants were generated for this dataset
+                ds_variants = dataset_variants.get(i, 1)
+                
+                # Generate test segments for this dataset specifically
+                ds_test_segments = []
+                for v in range(ds_variants):
+                    ds_test_segments.extend(run_segmentation(ds_test_rows, asr_results, seed=args.seed, variant_index=v))
+                
+                if not ds_test_segments:
+                    logger.warning(f"No test segments found for dataset {dataset_label}. Skipping test evaluation.")
+                    ds_test_mae = 0.0
+                    ds_test_corr = None
+                    ds_test_preds = pd.DataFrame(columns=["sample_id", "split", "accuracy", "estimated_accuracy", "residual", "ref_words"])
+                    y_ds_test = []
+                else:
+                    # Generate test ensemble samples for this dataset
+                    ds_test_samples, _ = generate_ensemble_samples(
+                        ds_test_segments, 16000, seed=args.seed, n_jobs=args.jobs
+                    )
+                    
+                    X_ds_test = np.array([s["features"] for s in ds_test_samples])
+                    y_ds_test = np.array([s["accuracy"] for s in ds_test_samples])
+                    ds_test_pred_calib = predictor.predict(X_ds_test)
+                    
+                    ds_test_mae = float(np.mean(np.abs(y_ds_test - ds_test_pred_calib)))
+                    ds_test_corr = safe_pearsonr(y_ds_test, ds_test_pred_calib)
+                    
+                    ds_test_records = []
+                    for idx, (act, est, s) in enumerate(zip(y_ds_test, ds_test_pred_calib, ds_test_samples)):
+                        ds_test_records.append({
+                            "sample_id": s["sample_id"],
+                            "split": "test",
+                            "accuracy": act,
+                            "estimated_accuracy": est,
+                            "residual": act - est,
+                            "ref_words": s["ref_words"]
+                        })
+                    ds_test_preds = pd.DataFrame(ds_test_records)
+                    ds_test_preds.to_csv(ds_output_dir / "predictions.test.csv", index=False)
+                
+                # Filter test_real predictions for this dataset
+                ds_test_real_group = df_test_real_group[
+                    df_test_real_group["sample_id"].map(group_to_dataset) == i
+                ]
+                ds_test_real_window = df_test_real_window[
+                    df_test_real_window["sample_id"].apply(lambda x: group_to_dataset.get(x.rsplit('_w', 1)[0])) == i
+                ]
+                
+                ds_test_real_group.to_csv(ds_output_dir / "predictions.test_real.csv", index=False)
+                ds_test_real_window.to_csv(ds_output_dir / "predictions.test_real_window.csv", index=False)
+                
+                if not ds_test_real_group.empty:
+                    ds_test_real_mae = float(np.mean(np.abs(ds_test_real_group["accuracy"] - ds_test_real_group["estimated_accuracy"])))
+                    ds_test_real_corr = safe_pearsonr(ds_test_real_group["accuracy"], ds_test_real_group["estimated_accuracy"])
+                else:
+                    ds_test_real_mae = 0.0
+                    ds_test_real_corr = None
+                
+                # Save metrics.json for this dataset
+                ds_metrics = {
+                    "test": {
+                        "MAE": ds_test_mae,
+                        "pearson_correlation": ds_test_corr,
+                        "n_points": len(y_ds_test)
+                    },
+                    "test_real": {
+                        "MAE": ds_test_real_mae,
+                        "pearson_correlation": ds_test_real_corr,
+                        "n_points": len(ds_test_real_group)
+                    }
+                }
+                with open(ds_output_dir / "metrics.json", "w", encoding="utf-8") as f:
+                    json.dump(ds_metrics, f, indent=2, ensure_ascii=False)
+                
+                # Save plots for this dataset
+                ds_plots_dir = ds_output_dir / "plots"
+                ds_plots_dir.mkdir(parents=True, exist_ok=True)
+                
+                # Test scatter plot
+                if not ds_test_preds.empty:
+                    plt.figure(figsize=(6, 6))
+                    plt.scatter(ds_test_preds["accuracy"], ds_test_preds["estimated_accuracy"], alpha=0.3, color="green")
+                    plt.plot([0, 1], [0, 1], color="red", linestyle="--")
+                    plt.xlabel("True Accuracy")
+                    plt.ylabel("Estimated Accuracy")
+                    plt.title(f"Test Scatter - {dataset_label} (MAE={ds_test_mae:.5f})")
+                    plt.xlim(-0.05, 1.05)
+                    plt.ylim(-0.05, 1.05)
+                    plt.grid(True)
+                    plt.tight_layout()
+                    plt.savefig(ds_plots_dir / "scatter_test.png")
+                    plt.close()
+                
+                # Test_real scatter plot
+                plt.figure(figsize=(6, 6))
+                if not ds_test_real_group.empty:
+                    plt.scatter(ds_test_real_group["accuracy"], ds_test_real_group["estimated_accuracy"], alpha=0.7, color="purple")
+                plt.plot([0, 1], [0, 1], color="red", linestyle="--")
+                plt.xlabel("True Accuracy")
+                plt.ylabel("Estimated Accuracy")
+                plt.title(f"Test_real Scatter - {dataset_label} (MAE={ds_test_real_mae:.5f})")
+                plt.xlim(-0.05, 1.05)
+                plt.ylim(-0.05, 1.05)
+                plt.grid(True)
+                plt.tight_layout()
+                plt.savefig(ds_plots_dir / "scatter_test_real.png")
+                plt.close()
+                
+                logger.info(f"Saved dataset-specific report for {dataset_label} to {ds_output_dir}")
+                
         logger.info("Calibration workflow completed successfully.")
     finally:
         logger.removeHandler(file_handler)

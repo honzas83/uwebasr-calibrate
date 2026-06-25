@@ -1022,7 +1022,20 @@ predictions.test_real.csv
 metrics.json
 model/
 plots/
+<dataset_label_1>/
+  predictions.test.csv
+  predictions.test_real.csv
+  predictions.test_real_window.csv
+  metrics.json
+  plots/
+    scatter_test.png
+    scatter_test_real.png
+<dataset_label_2>/
+  ...
 ```
+
+In a multi-model joint calibration scenario (multiple `--dataset` arguments), the output directory contains a subdirectory for each dataset (named after the dataset's directory/label). Each subdirectory contains the evaluation metrics, prediction files, and scatter plots calculated specifically on that individual dataset's test and `test_real` splits using the joint calibration model.
+
 
 Required columns for `utterance_metrics.csv`:
 

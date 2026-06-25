@@ -70,7 +70,7 @@ Optional columns:
 
 ```text
 speaker_id  explicit speaker/group identifier
-video_id    explicit long-recording/group identifier for test_real
+video_id    explicit group/recording identifier for test_real (optional, aliases: group_id, recording_id)
 ```
 
 If `utt_id` is missing, it may be derived from the audio filename stem, but the
@@ -346,16 +346,14 @@ default because speaker-disjoint evaluation cannot be guaranteed. A user may
 explicitly choose `--split-group utterance` for datasets where speaker
 separation is impossible, but reports must mark this as a weaker split.
 
-The video ID for `test_real` is taken from manifest `video_id` when present.
-Otherwise use the first matching utterance-ID pattern:
+The group identifier for `test_real` (historically named `video_id` in the metrics outputs) is taken from manifest fields `video_id`, `group_id`, or `recording_id` when present. If none of these are present, it is completely optional and the script will fallback to the first matching utterance-ID pattern:
 
 ```text
 ^(\d{5}_[A-Z]_\d{3})_
 ^(\d{5}_\d{2})_
 ```
 
-If no pattern matches, fall back to the source utterance ID without any segment
-suffix.
+If no pattern matches, the script falls back to the source utterance ID (`utt_id`) itself, treating each utterance as an independent recording group.
 
 ## Train, Test, and Test-Real Split
 

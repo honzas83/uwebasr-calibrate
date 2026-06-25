@@ -22,7 +22,7 @@ For each utterance (row), the following fields are required:
 To support speaker-disjoint splitting and realistic long-recording evaluations (`test_real`), you can provide these optional fields:
 
 - **`speaker_id`**: A stable identifier for the speaker. Used as the group key to partition train/test splits, ensuring no speaker's voice leaks between training and test sets. If not provided, the script will attempt to extract it from the `utt_id` using the regular expression `(?<!\d)(\d{4,5})(?!\d)` (e.g. `12345_A_001_000123` -> speaker `12345`).
-- **`video_id`**: A group identifier representing a single long recording (e.g., a video or program). Used during `test_real` aggregation. If not provided, it falls back to the `video_id` patterns or the `utt_id` itself.
+- **`video_id`** (or **`group_id`** / **`recording_id`**): An optional group identifier representing a single long recording (e.g., a podcast episode, audio program, or video). This is used to aggregate windowed predictions in the `test_real` evaluation. **If your dataset does not have this identifier, you can omit it entirely.** The script will automatically fall back to the `utt_id` itself (or extract it from utterance ID patterns for MALACH sets), treating each utterance as an independent recording.
 - **`split`**: An explicit split assignment. Supported values are `"train"` or `"test"`. If provided, the tool will skip its random speaker-disjoint partitioning and assign utterances directly to the train or test set as specified.
 
 ---

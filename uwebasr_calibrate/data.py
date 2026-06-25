@@ -90,7 +90,7 @@ def load_manifest(manifest_path, skip_bad_rows=False):
                     utt_id = audio_path.stem
                     
                 speaker_id = item.get("speaker_id")
-                video_id = item.get("video_id")
+                video_id = item.get("video_id") or item.get("group_id") or item.get("recording_id")
                 
             # Validation
             if not reference or not reference.strip():

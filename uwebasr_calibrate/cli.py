@@ -575,6 +575,9 @@ def run_calibration_workflow(args):
                 "train_fraction": 0.8,
                 "ensemble_train_size": 64000,
                 "ensemble_test_size": 16000,
+                "ensemble_min_words": 128,
+                "ensemble_max_words": 1024,
+                "ensemble_min_segments": 1,
                 "segment_variants": dataset_variants
             },
             "selected_hyperparameters": best_params,

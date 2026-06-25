@@ -424,12 +424,17 @@ def sample_ensemble_single(deciles, target_words, min_segments, rng):
         
     return chosen_segs
 
-def _generate_ensemble_batch(batch_indices, deciles, seed, target_words, min_segments):
+def _generate_ensemble_batch(batch_indices, deciles, seed, min_words, max_words, min_segments):
     batch_samples = []
     for i in batch_indices:
         sample_seed = int((seed + i * 2026) % (2**32))
         sample_rng = np.random.RandomState(sample_seed)
         
+        if min_words == max_words:
+            target_words = min_words
+        else:
+            target_words = int(sample_rng.randint(min_words, max_words + 1))
+            
         chosen_segs = sample_ensemble_single(deciles, target_words, min_segments, sample_rng)
         
         # Concatenate CTC tokens and probs
@@ -457,7 +462,7 @@ def _generate_ensemble_batch(batch_indices, deciles, seed, target_words, min_seg
         })
     return batch_samples
 
-def generate_ensemble_samples(segments, sample_count, seed, n_jobs=1, target_words=512, min_segments=2):
+def generate_ensemble_samples(segments, sample_count, seed, n_jobs=1, min_words=128, max_words=1024, min_segments=1):
     """
     Generates sample_count ensemble samples.
     """
@@ -469,14 +474,14 @@ def generate_ensemble_samples(segments, sample_count, seed, n_jobs=1, target_wor
     
     if n_jobs == 1:
         # Avoid multiprocessing overhead entirely for single job
-        samples = _generate_ensemble_batch(range(sample_count), deciles, seed, target_words, min_segments)
+        samples = _generate_ensemble_batch(range(sample_count), deciles, seed, min_words, max_words, min_segments)
     else:
         # Split sample indices into n_jobs * 4 batches to balance load and minimize IPC overhead
         num_batches = max(1, n_jobs * 4)
         indices_batches = np.array_split(range(sample_count), num_batches)
         
         results = Parallel(n_jobs=n_jobs)(
-            delayed(_generate_ensemble_batch)(batch, deciles, seed, target_words, min_segments)
+            delayed(_generate_ensemble_batch)(batch, deciles, seed, min_words, max_words, min_segments)
             for batch in indices_batches
         )
         

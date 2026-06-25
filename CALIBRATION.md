@@ -51,7 +51,7 @@ uwebasr-calibrate \
   --seed 13
 ```
 
-All other parameters (such as `--target-segments`, `--jobs`, `--seed`, `--split-group`, `--skip-bad-rows`, etc.) act as global configuration values applied to all specified tasks.
+All other parameters (such as `--target-segments`, `--jobs`, `--seed`, `--split-group`, `--loss`, `--skip-bad-rows`, etc.) act as global configuration values applied to all specified tasks.
 
 The `--uwebasr-url` argument is the complete model endpoint URL. Users normally
 pass it without the `format` query parameter. The script requests:
@@ -1062,7 +1062,7 @@ ref_words
 ```
 
 For `predictions.test_real.csv`, `sample_id` is the speaker/group ID and
-the file should also include `n_windows`. `metrics.json` must include MAE and
+the file should also include `n_windows`. `metrics.json` must include MAE, MSE, and
 Pearson correlation for `validation`, `test`, and aggregated `test_real`, plus
 the number of points used in each metric.
 

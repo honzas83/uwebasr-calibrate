@@ -351,8 +351,8 @@ def run_calibration_workflow(args):
         
         # 8. Train HGBR models & fit affine calibration
         logger.info("Training models...")
-        predictor, best_params, best_val_mae, val_pred_calib, y_val = train_calibration_model(
-            train_samples, seed=args.seed
+        predictor, best_params, best_val_score, val_pred_calib, y_val = train_calibration_model(
+            train_samples, seed=args.seed, loss_metric=args.loss
         )
         
         # Save trained predictor
@@ -361,8 +361,9 @@ def run_calibration_workflow(args):
         
         # 9. Evaluate validation
         val_mae = float(np.mean(np.abs(y_val - val_pred_calib)))
+        val_mse = float(np.mean((y_val - val_pred_calib) ** 2))
         val_corr = safe_pearsonr(y_val, val_pred_calib)
-        logger.info(f"Validation results: MAE={val_mae:.5f}, corr={val_corr}")
+        logger.info(f"Validation results: MAE={val_mae:.5f}, MSE={val_mse:.5f}, corr={val_corr}")
         
         # Save validation predictions
         val_records = []
@@ -384,8 +385,9 @@ def run_calibration_workflow(args):
         test_pred_calib = predictor.predict(X_test)
         
         test_mae = float(np.mean(np.abs(y_test - test_pred_calib)))
+        test_mse = float(np.mean((y_test - test_pred_calib) ** 2))
         test_corr = safe_pearsonr(y_test, test_pred_calib)
-        logger.info(f"Test results: MAE={test_mae:.5f}, corr={test_corr}")
+        logger.info(f"Test results: MAE={test_mae:.5f}, MSE={test_mse:.5f}, corr={test_corr}")
         
         test_records = []
         for idx, (act, est, s) in enumerate(zip(y_test, test_pred_calib, test_samples)):
@@ -475,12 +477,14 @@ def run_calibration_workflow(args):
         # Compute test_real metrics
         if not df_test_real_group.empty:
             test_real_mae = float(np.mean(np.abs(df_test_real_group["accuracy"] - df_test_real_group["estimated_accuracy"])))
+            test_real_mse = float(np.mean((df_test_real_group["accuracy"] - df_test_real_group["estimated_accuracy"]) ** 2))
             test_real_corr = safe_pearsonr(df_test_real_group["accuracy"], df_test_real_group["estimated_accuracy"])
         else:
             test_real_mae = 0.0
+            test_real_mse = 0.0
             test_real_corr = None
             
-        logger.info(f"Test_real results: MAE={test_real_mae:.5f}, corr={test_real_corr}")
+        logger.info(f"Test_real results: MAE={test_real_mae:.5f}, MSE={test_real_mse:.5f}, corr={test_real_corr}")
         
         # 12. Save features.csv (for inspection/reproducibility)
         # Build list of feature rows
@@ -516,7 +520,7 @@ def run_calibration_workflow(args):
         plt.plot([0, 1], [0, 1], color="red", linestyle="--")
         plt.xlabel("True Accuracy")
         plt.ylabel("Estimated Accuracy")
-        plt.title(f"Validation Scatter (MAE={val_mae:.5f})")
+        plt.title(f"Validation Scatter (MAE={val_mae:.5f}, MSE={val_mse:.5f})")
         plt.xlim(-0.05, 1.05)
         plt.ylim(-0.05, 1.05)
         plt.grid(True)
@@ -530,7 +534,7 @@ def run_calibration_workflow(args):
         plt.plot([0, 1], [0, 1], color="red", linestyle="--")
         plt.xlabel("True Accuracy")
         plt.ylabel("Estimated Accuracy")
-        plt.title(f"Test Scatter (MAE={test_mae:.5f})")
+        plt.title(f"Test Scatter (MAE={test_mae:.5f}, MSE={test_mse:.5f})")
         plt.xlim(-0.05, 1.05)
         plt.ylim(-0.05, 1.05)
         plt.grid(True)
@@ -545,7 +549,7 @@ def run_calibration_workflow(args):
         plt.plot([0, 1], [0, 1], color="red", linestyle="--")
         plt.xlabel("True Accuracy")
         plt.ylabel("Estimated Accuracy")
-        plt.title(f"Test_real Scatter (MAE={test_mae:.5f})" if df_test_real_group.empty else f"Test_real Group Scatter (MAE={test_real_mae:.5f})")
+        plt.title(f"Test_real Scatter (MSE={test_real_mse:.5f})" if df_test_real_group.empty else f"Test_real Group Scatter (MAE={test_real_mae:.5f}, MSE={test_real_mse:.5f})")
         plt.xlim(-0.05, 1.05)
         plt.ylim(-0.05, 1.05)
         plt.grid(True)
@@ -567,6 +571,7 @@ def run_calibration_workflow(args):
                 "seed": args.seed,
                 "target_segments": args.target_segments,
                 "split_group": args.split_group,
+                "loss": args.loss,
                 "train_fraction": 0.8,
                 "ensemble_train_size": 64000,
                 "ensemble_test_size": 16000,
@@ -596,6 +601,7 @@ def run_calibration_workflow(args):
             "jobs": args.jobs,
             "seed": args.seed,
             "split_group": args.split_group,
+            "loss": args.loss,
             "skip_bad_rows": args.skip_bad_rows,
             "train_speakers": train_speakers,
             "test_speakers": test_speakers,
@@ -614,16 +620,19 @@ def run_calibration_workflow(args):
         metrics = {
             "validation": {
                 "MAE": val_mae,
+                "MSE": val_mse,
                 "pearson_correlation": val_corr,
                 "n_points": len(y_val)
             },
             "test": {
                 "MAE": test_mae,
+                "MSE": test_mse,
                 "pearson_correlation": test_corr,
                 "n_points": len(y_test)
             },
             "test_real": {
                 "MAE": test_real_mae,
+                "MSE": test_real_mse,
                 "pearson_correlation": test_real_corr,
                 "n_points": len(df_test_real_group)
             }
@@ -657,6 +666,7 @@ def run_calibration_workflow(args):
                 if not ds_test_segments:
                     logger.warning(f"No test segments found for dataset {dataset_label}. Skipping test evaluation.")
                     ds_test_mae = 0.0
+                    ds_test_mse = 0.0
                     ds_test_corr = None
                     ds_test_preds = pd.DataFrame(columns=["sample_id", "split", "accuracy", "estimated_accuracy", "residual", "ref_words"])
                     y_ds_test = []
@@ -671,6 +681,7 @@ def run_calibration_workflow(args):
                     ds_test_pred_calib = predictor.predict(X_ds_test)
                     
                     ds_test_mae = float(np.mean(np.abs(y_ds_test - ds_test_pred_calib)))
+                    ds_test_mse = float(np.mean((y_ds_test - ds_test_pred_calib) ** 2))
                     ds_test_corr = safe_pearsonr(y_ds_test, ds_test_pred_calib)
                     
                     ds_test_records = []
@@ -699,20 +710,24 @@ def run_calibration_workflow(args):
                 
                 if not ds_test_real_group.empty:
                     ds_test_real_mae = float(np.mean(np.abs(ds_test_real_group["accuracy"] - ds_test_real_group["estimated_accuracy"])))
+                    ds_test_real_mse = float(np.mean((ds_test_real_group["accuracy"] - ds_test_real_group["estimated_accuracy"]) ** 2))
                     ds_test_real_corr = safe_pearsonr(ds_test_real_group["accuracy"], ds_test_real_group["estimated_accuracy"])
                 else:
                     ds_test_real_mae = 0.0
+                    ds_test_real_mse = 0.0
                     ds_test_real_corr = None
                 
                 # Save metrics.json for this dataset
                 ds_metrics = {
                     "test": {
                         "MAE": ds_test_mae,
+                        "MSE": ds_test_mse,
                         "pearson_correlation": ds_test_corr,
                         "n_points": len(y_ds_test)
                     },
                     "test_real": {
                         "MAE": ds_test_real_mae,
+                        "MSE": ds_test_real_mse,
                         "pearson_correlation": ds_test_real_corr,
                         "n_points": len(ds_test_real_group)
                     }
@@ -731,7 +746,7 @@ def run_calibration_workflow(args):
                     plt.plot([0, 1], [0, 1], color="red", linestyle="--")
                     plt.xlabel("True Accuracy")
                     plt.ylabel("Estimated Accuracy")
-                    plt.title(f"Test Scatter - {dataset_label} (MAE={ds_test_mae:.5f})")
+                    plt.title(f"Test Scatter - {dataset_label} (MAE={ds_test_mae:.5f}, MSE={ds_test_mse:.5f})")
                     plt.xlim(-0.05, 1.05)
                     plt.ylim(-0.05, 1.05)
                     plt.grid(True)
@@ -746,7 +761,7 @@ def run_calibration_workflow(args):
                 plt.plot([0, 1], [0, 1], color="red", linestyle="--")
                 plt.xlabel("True Accuracy")
                 plt.ylabel("Estimated Accuracy")
-                plt.title(f"Test_real Scatter - {dataset_label} (MAE={ds_test_real_mae:.5f})")
+                plt.title(f"Test_real Scatter - {dataset_label} (MAE={ds_test_real_mae:.5f}, MSE={ds_test_real_mse:.5f})")
                 plt.xlim(-0.05, 1.05)
                 plt.ylim(-0.05, 1.05)
                 plt.grid(True)
@@ -770,6 +785,7 @@ def main():
     parser.add_argument("--jobs", type=int, default=6, help="Number of parallel ASR jobs")
     parser.add_argument("--seed", type=int, default=13, help="Random seed")
     parser.add_argument("--split-group", choices=["speaker", "utterance"], default="speaker", help="Group key for train/test split")
+    parser.add_argument("--loss", choices=["mae", "mse"], default="mae", help="Loss function / optimization criterion for training the calibration model")
     parser.add_argument("--skip-bad-rows", action="store_true", help="Skip rows with missing audio, empty references, etc.")
     parser.add_argument("--limit", type=int, default=None, help="Limit number of utterances to process for debugging")
     

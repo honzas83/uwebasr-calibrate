@@ -39,12 +39,13 @@ uwebasr-calibrate \
   --seed 13
 ```
 
-Alternatively, to support running multiple dataset-model configurations in a single run (multi-model setup), you can specify the `--dataset`, `--uwebasr-url`, and `--output-dir` arguments multiple times. The script will run them sequentially, associating arguments by their order:
+Alternatively, to support running multiple dataset-model configurations to train a single joint calibration model (multi-model setup), you can specify the `--dataset` and `--uwebasr-url` arguments multiple times, and a single `--output-dir` directory. The script will load all manifests, query their respective model endpoints, merge the data, and train a single joint calibration model saved in the output directory:
 
 ```text
 uwebasr-calibrate \
-  --dataset datasets/cs/ref.json --uwebasr-url https://uwebasr.zcu.cz/api/v2/speechcloud/generic/cs/zipformer --output-dir output_cs \
-  --dataset datasets/de/ref.json --uwebasr-url https://uwebasr.zcu.cz/api/v2/speechcloud/generic/de/zipformer --output-dir output_de \
+  --dataset datasets/cs/ref.json --uwebasr-url https://uwebasr.zcu.cz/api/v2/speechcloud/generic/cs/zipformer \
+  --dataset datasets/de/ref.json --uwebasr-url https://uwebasr.zcu.cz/api/v2/speechcloud/generic/de/zipformer \
+  --output-dir output_multi \
   --target-segments 8000 \
   --jobs 6 \
   --seed 13

@@ -120,25 +120,39 @@ def run_calibration_workflow(args):
     try:
         logger.info(f"Loaded configuration. Output directory: {output_dir}")
         
-        # Parse URL
-        try:
-            url = prepare_url(args.uwebasr_url)
-            logger.info(f"Using endpoint URL: {url}")
-        except ValueError as e:
-            logger.error(f"Invalid URL configuration: {e}")
-            raise e
-            
-        # 2. Load manifest
-        try:
-            logger.info(f"Loading manifest: {args.dataset}")
-            rows = load_manifest(args.dataset, skip_bad_rows=args.skip_bad_rows)
-            logger.info(f"Loaded {len(rows)} utterances from manifest.")
-            if args.limit is not None:
-                logger.info(f"Limiting execution to first {args.limit} utterances for debugging.")
-                rows = rows[:args.limit]
-        except Exception as e:
-            logger.error(f"Failed to load manifest: {e}")
-            raise e
+        # 2. Load manifest files and map to URLs
+        n_datasets = len(args.dataset)
+        all_rows = []
+        utt_to_url = {}
+        
+        for i in range(n_datasets):
+            dataset_path = args.dataset[i]
+            # Parse and prepare URL
+            try:
+                url = prepare_url(args.uwebasr_url[i])
+                logger.info(f"Loading dataset {i+1}/{n_datasets}: {dataset_path} with endpoint {url}")
+            except ValueError as e:
+                logger.error(f"Invalid URL configuration at index {i}: {e}")
+                raise e
+                
+            try:
+                rows = load_manifest(dataset_path, skip_bad_rows=args.skip_bad_rows)
+                logger.info(f"Loaded {len(rows)} utterances from dataset {i+1}.")
+                for r in rows:
+                    utt_id = r["utt_id"]
+                    if utt_id in utt_to_url:
+                        # De-duplicate utterance IDs across datasets if they collide
+                        r["utt_id"] = f"{utt_id}_ds{i}"
+                        utt_id = r["utt_id"]
+                    utt_to_url[utt_id] = url
+                    all_rows.append(r)
+            except Exception as e:
+                logger.error(f"Failed to load manifest {dataset_path}: {e}")
+                raise e
+                
+        if args.limit is not None:
+            logger.info(f"Limiting execution to first {args.limit} utterances for debugging.")
+            all_rows = all_rows[:args.limit]
             
         # 3. Recognition (Resumable)
         asr_results = {}
@@ -147,8 +161,8 @@ def run_calibration_workflow(args):
         logger.info(f"Running ASR recognition with {args.jobs} jobs...")
         with ThreadPoolExecutor(max_workers=args.jobs) as executor:
             futures = {
-                executor.submit(process_utterance, row, url, cache_dir, 90, 7): row
-                for row in rows
+                executor.submit(process_utterance, row, utt_to_url[row["utt_id"]], cache_dir, 90, 7): row
+                for row in all_rows
             }
             total_utts = len(futures)
             completed_count = 0
@@ -172,7 +186,7 @@ def run_calibration_workflow(args):
         
         # 4. Compute normalized reference/hypothesis metrics & save utterance_metrics.csv
         utt_metrics = []
-        for row in rows:
+        for row in all_rows:
             utt_id = row["utt_id"]
             asr_data = asr_results[utt_id]
             asr_result = validate_asr_result(asr_data["result"])
@@ -210,7 +224,7 @@ def run_calibration_workflow(args):
         
         # Filter rows to only those with valid normalized reference words
         valid_utt_ids = set(df_utt_metrics["utt_id"])
-        filtered_rows = [r for r in rows if r["utt_id"] in valid_utt_ids]
+        filtered_rows = [r for r in all_rows if r["utt_id"] in valid_utt_ids]
         
         # 5. Split rows by speaker/group
         from uwebasr_calibrate.data import get_speaker_id, get_group_id
@@ -595,9 +609,9 @@ def run_calibration_workflow(args):
 
 def main():
     parser = argparse.ArgumentParser(description="UWebASR Confidence Calibration Script")
-    parser.add_argument("--dataset", action="append", help="Path to dataset manifest")
-    parser.add_argument("--uwebasr-url", action="append", help="UWebASR model endpoint URL")
-    parser.add_argument("--output-dir", action="append", help="Output directory")
+    parser.add_argument("--dataset", action="append", required=True, help="Path to dataset manifest")
+    parser.add_argument("--uwebasr-url", action="append", required=True, help="UWebASR model endpoint URL")
+    parser.add_argument("--output-dir", required=True, help="Output directory")
     parser.add_argument("--target-segments", type=int, default=8000, help="Approximate target number of word-aligned segments")
     parser.add_argument("--jobs", type=int, default=6, help="Number of parallel ASR jobs")
     parser.add_argument("--seed", type=int, default=13, help="Random seed")
@@ -607,39 +621,19 @@ def main():
     
     args = parser.parse_args()
     
-    if not args.dataset or not args.uwebasr_url or not args.output_dir:
-        parser.error("The following arguments are required: --dataset, --uwebasr-url, --output-dir")
-        
     n_datasets = len(args.dataset)
     n_urls = len(args.uwebasr_url)
-    n_dirs = len(args.output_dir)
     
-    if n_datasets != n_urls or n_datasets != n_dirs:
+    if n_datasets != n_urls:
         parser.error(
-            f"The number of --dataset ({n_datasets}), --uwebasr-url ({n_urls}), "
-            f"and --output-dir ({n_dirs}) arguments must match."
+            f"The number of --dataset ({n_datasets}) and --uwebasr-url ({n_urls}) arguments must match."
         )
         
-    logger.info(f"Running calibration for {n_datasets} dataset/model configurations...")
-    
-    for i in range(n_datasets):
-        logger.info(f"=== Starting calibration {i+1}/{n_datasets} ===")
-        task_args = argparse.Namespace(
-            dataset=args.dataset[i],
-            uwebasr_url=args.uwebasr_url[i],
-            output_dir=args.output_dir[i],
-            target_segments=args.target_segments,
-            jobs=args.jobs,
-            seed=args.seed,
-            split_group=args.split_group,
-            skip_bad_rows=args.skip_bad_rows,
-            limit=args.limit
-        )
-        try:
-            run_calibration_workflow(task_args)
-        except Exception as e:
-            logger.error(f"Calibration {i+1} failed with error: {e}")
-            sys.exit(1)
+    try:
+        run_calibration_workflow(args)
+    except Exception as e:
+        logger.error(f"Calibration failed: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

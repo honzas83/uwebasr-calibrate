@@ -116,12 +116,13 @@ uwebasr-calibrate \
 
 ### Running a Multi-Model Calibration Setup
 
-To run calibration on multiple datasets and endpoints in a single command (multi-model setup), you can specify the `--dataset`, `--uwebasr-url`, and `--output-dir` parameters multiple times. The script will run each calibration sequentially:
+To run joint calibration on multiple datasets and endpoints in a single command (multi-model setup) to train a single unified model, you can specify the `--dataset` and `--uwebasr-url` parameters multiple times, and provide a single `--output-dir`:
 
 ```bash
 uwebasr-calibrate \
-  --dataset datasets/cs/ref.json --uwebasr-url https://uwebasr.zcu.cz/api/v2/speechcloud/generic/cs/zipformer --output-dir output_cs \
-  --dataset datasets/de/ref.json --uwebasr-url https://uwebasr.zcu.cz/api/v2/speechcloud/generic/de/zipformer --output-dir output_de \
+  --dataset datasets/cs/ref.json --uwebasr-url https://uwebasr.zcu.cz/api/v2/speechcloud/generic/cs/zipformer \
+  --dataset datasets/de/ref.json --uwebasr-url https://uwebasr.zcu.cz/api/v2/speechcloud/generic/de/zipformer \
+  --output-dir output_multi \
   --jobs 6
 ```
 

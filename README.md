@@ -4,7 +4,9 @@ Confidence calibration scripts for UWebASR speech recognition models.
 
 ## Motivation & Overview
 
-This package implements the confidence calibration workflow described in [CALIBRATION.md](CALIBRATION.md).
+This package implements the confidence calibration workflow described in [CALIBRATION.md](CALIBRATION.md) for [UWebASR](https://uwebasr.zcu.cz).
+
+[UWebASR](https://uwebasr.zcu.cz) is an automatic speech recognition (ASR) web service developed by the University of West Bohemia in Pilsen. It provides cloud-based speech-to-text recognition API endpoints supporting multiple languages (such as Czech, English, German, Slovak, and others) using state-of-the-art speech recognition models like Zipformer.
 
 The primary goal is to provide a reproducible set of open scripts that build an accuracy regressor for any user-provided evaluation set and any selected UWebASR model. Users can run the calibration locally against their own labelled data and obtain a model-specific predictor of recognition accuracy, **without sharing reference transcripts** with the UWebASR team.
 

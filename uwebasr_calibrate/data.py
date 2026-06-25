@@ -75,7 +75,7 @@ def load_manifest(manifest_path, skip_bad_rows=False):
                 audio_path = manifest_dir / "audio" / Path(filename).name
                 reference = item["text"]
                 speaker_id = item.get("speaker_id")
-                video_id = item.get("video_id")
+                group_id = item.get("group_id") or item.get("recording_id") or item.get("video_id")
             else:
                 audio_path_raw = item.get("audio_path")
                 if not audio_path_raw:
@@ -90,7 +90,7 @@ def load_manifest(manifest_path, skip_bad_rows=False):
                     utt_id = audio_path.stem
                     
                 speaker_id = item.get("speaker_id")
-                video_id = item.get("video_id") or item.get("group_id") or item.get("recording_id")
+                group_id = item.get("group_id") or item.get("recording_id") or item.get("video_id")
                 
             # Validation
             if not reference or not reference.strip():
@@ -107,7 +107,7 @@ def load_manifest(manifest_path, skip_bad_rows=False):
                 "audio_path": str(audio_path),
                 "reference": reference,
                 "speaker_id": str(speaker_id) if speaker_id else None,
-                "video_id": str(video_id) if video_id else None,
+                "group_id": str(group_id) if group_id else None,
                 "split": str(item.get("split")) if item.get("split") else None
             })
             
@@ -133,15 +133,15 @@ def get_speaker_id(utt_id, explicit_speaker_id=None):
         return f"{int(match.group(1)):05d}"
     return None
 
-VIDEO_PATTERNS = [
+GROUP_PATTERNS = [
     re.compile(r"^(\d{5}_[A-Z]_\d{3})_"),
     re.compile(r"^(\d{5}_\d{2})_")
 ]
 
-def get_video_id(utt_id, explicit_video_id=None):
-    if explicit_video_id:
-        return explicit_video_id
-    for pattern in VIDEO_PATTERNS:
+def get_group_id(utt_id, explicit_group_id=None):
+    if explicit_group_id:
+        return explicit_group_id
+    for pattern in GROUP_PATTERNS:
         match = pattern.match(utt_id)
         if match:
             return match.group(1)
@@ -157,7 +157,7 @@ def split_dataset(rows, train_fraction=0.8, seed=13, split_group="speaker"):
         # First assign speaker ID to each row
         for row in rows:
             row["speaker_id"] = get_speaker_id(row["utt_id"], row["speaker_id"])
-            row["video_id"] = get_video_id(row["utt_id"], row["video_id"])
+            row["group_id"] = get_group_id(row["utt_id"], row.get("group_id"))
             
         # Get speakers
         speakers = sorted(list(set(r["speaker_id"] for r in rows if r["speaker_id"] is not None)))
@@ -199,7 +199,7 @@ def split_dataset(rows, train_fraction=0.8, seed=13, split_group="speaker"):
         
         for row in rows:
             row["speaker_id"] = get_speaker_id(row["utt_id"], row["speaker_id"]) or "unknown"
-            row["video_id"] = get_video_id(row["utt_id"], row["video_id"])
+            row["group_id"] = get_group_id(row["utt_id"], row.get("group_id"))
             
         return train_rows, test_rows, [], []
 
@@ -245,7 +245,7 @@ def generate_ref_spans(num_ref_words, min_words=10, max_words=256, rng=None):
         
     return spans
 
-def slice_utterance(utt_id, reference, word_array, word_times, ctc_tokens, ctc_probs, ctc_frame_len, ref_spans, speaker_id=None, video_id=None):
+def slice_utterance(utt_id, reference, word_array, word_times, ctc_tokens, ctc_probs, ctc_frame_len, ref_spans, speaker_id=None, group_id=None):
     """
     Slices the utterance into segments based on reference word spans.
     """
@@ -323,7 +323,7 @@ def slice_utterance(utt_id, reference, word_array, word_times, ctc_tokens, ctc_p
         segments.append({
             "utt_id": utt_id,
             "speaker_id": speaker_id,
-            "video_id": video_id,
+            "group_id": group_id,
             "ref_start": ref_start,
             "ref_end": ref_end,
             "reference_words": len(seg_ref),
@@ -366,7 +366,7 @@ def run_segmentation(rows, asr_results, seed, variant_index=0, min_words=10, max
             ctc_frame_len=asr_result["ctc_frame_len"],
             ref_spans=ref_spans,
             speaker_id=row["speaker_id"],
-            video_id=row["video_id"]
+            group_id=row["group_id"]
         )
         
         all_segments.extend(segments)
@@ -487,23 +487,23 @@ def generate_ensemble_samples(segments, sample_count, seed, n_jobs=1, target_wor
 
 def get_test_real_windows(test_rows, asr_results):
     """
-    Converts test_rows into test_real speaker/video windows of approx 512 words.
+    Converts test_rows into test_real speaker/group windows of approx 512 words.
     Returns window data ready for feature extraction.
     """
-    # Group by video_id
+    # Group by group_id
     from collections import defaultdict
-    video_groups = defaultdict(list)
+    group_groups = defaultdict(list)
     for row in test_rows:
-        video_groups[row["video_id"]].append(row)
+        group_groups[row["group_id"]].append(row)
         
-    windows_by_video = {}
+    windows_by_group = {}
     
-    for vid, group in video_groups.items():
+    for gid, group in group_groups.items():
         # Sort by utt_id for determinism
         group = sorted(group, key=lambda r: r["utt_id"])
         
         # Generate at-most-512 spans for each utterance, and slice them
-        video_chunks = []
+        group_chunks = []
         for row in group:
             utt_id = row["utt_id"]
             asr_data = asr_results[utt_id]
@@ -530,16 +530,16 @@ def get_test_real_windows(test_rows, asr_results):
                 ctc_frame_len=asr_result["ctc_frame_len"],
                 ref_spans=ref_spans,
                 speaker_id=row["speaker_id"],
-                video_id=row["video_id"]
+                group_id=row["group_id"]
             )
-            video_chunks.extend(chunks)
+            group_chunks.extend(chunks)
             
         # Accumulate chunks into approx 512-word windows
         windows = []
         current_window = []
         current_words = 0
         
-        for chunk in video_chunks:
+        for chunk in group_chunks:
             current_window.append(chunk)
             current_words += chunk["reference_words"]
             
@@ -552,6 +552,6 @@ def get_test_real_windows(test_rows, asr_results):
         if current_words >= 10:
             windows.append(current_window)
             
-        windows_by_video[vid] = windows
+        windows_by_group[gid] = windows
         
-    return windows_by_video
+    return windows_by_group

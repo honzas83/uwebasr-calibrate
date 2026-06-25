@@ -109,7 +109,6 @@ def main():
     parser.add_argument("--split-group", choices=["speaker", "utterance"], default="speaker", help="Group key for train/test split")
     parser.add_argument("--skip-bad-rows", action="store_true", help="Skip rows with missing audio, empty references, etc.")
     parser.add_argument("--limit", type=int, default=None, help="Limit number of utterances to process for debugging")
-    parser.add_argument("--test-dataset", default=None, help="Path to test dataset manifest (if dataset is already split)")
     
     args = parser.parse_args()
     
@@ -142,34 +141,13 @@ def main():
         sys.exit(1)
         
     # 2. Load manifest
-    original_train_rows = []
-    original_test_rows = []
-    has_test_dataset = False
-    
     try:
-        if args.test_dataset:
-            has_test_dataset = True
-            logger.info(f"Loading train manifest: {args.dataset}")
-            original_train_rows = load_manifest(args.dataset, skip_bad_rows=args.skip_bad_rows)
-            logger.info(f"Loaded {len(original_train_rows)} train utterances.")
-            
-            logger.info(f"Loading test manifest: {args.test_dataset}")
-            original_test_rows = load_manifest(args.test_dataset, skip_bad_rows=args.skip_bad_rows)
-            logger.info(f"Loaded {len(original_test_rows)} test utterances.")
-            
-            if args.limit is not None:
-                logger.info(f"Limiting execution to first {args.limit} train and test utterances for debugging.")
-                original_train_rows = original_train_rows[:args.limit]
-                original_test_rows = original_test_rows[:args.limit]
-                
-            rows = original_train_rows + original_test_rows
-        else:
-            logger.info(f"Loading manifest: {args.dataset}")
-            rows = load_manifest(args.dataset, skip_bad_rows=args.skip_bad_rows)
-            logger.info(f"Loaded {len(rows)} utterances from manifest.")
-            if args.limit is not None:
-                logger.info(f"Limiting execution to first {args.limit} utterances for debugging.")
-                rows = rows[:args.limit]
+        logger.info(f"Loading manifest: {args.dataset}")
+        rows = load_manifest(args.dataset, skip_bad_rows=args.skip_bad_rows)
+        logger.info(f"Loaded {len(rows)} utterances from manifest.")
+        if args.limit is not None:
+            logger.info(f"Limiting execution to first {args.limit} utterances for debugging.")
+            rows = rows[:args.limit]
     except Exception as e:
         logger.error(f"Failed to load manifest: {e}")
         sys.exit(1)
@@ -229,8 +207,8 @@ def main():
         
         utt_metrics.append({
             "utt_id": utt_id,
-            "speaker_id": asr_data.get("speaker_id") or "unknown",
-            "video_id": asr_data.get("video_id") or utt_id,
+            "speaker_id": row.get("speaker_id") or "unknown",
+            "group_id": row.get("group_id") or utt_id,
             "audio_path": row["audio_path"],
             "reference_words": ref_words_count,
             "hypothesis_words": hyp_words_count,
@@ -247,50 +225,33 @@ def main():
     filtered_rows = [r for r in rows if r["utt_id"] in valid_utt_ids]
     
     # 5. Split rows by speaker/group
-    from uwebasr_calibrate.data import get_speaker_id, get_video_id
+    from uwebasr_calibrate.data import get_speaker_id, get_group_id
     
     try:
-        if has_test_dataset:
-            logger.info("Using pre-defined split from separate train and test manifest files.")
-            train_rows = [r for r in original_train_rows if r["utt_id"] in valid_utt_ids]
-            test_rows = [r for r in original_test_rows if r["utt_id"] in valid_utt_ids]
+        has_explicit_split = any("split" in r and r["split"] in ["train", "test"] for r in filtered_rows)
+        if has_explicit_split:
+            logger.info("Using pre-defined split from 'split' column in the manifest.")
+            train_rows = [r for r in filtered_rows if r.get("split") == "train"]
+            test_rows = [r for r in filtered_rows if r.get("split") == "test"]
             
             for r in train_rows:
                 r["speaker_id"] = get_speaker_id(r["utt_id"], r.get("speaker_id"))
-                r["video_id"] = get_video_id(r["utt_id"], r.get("video_id"))
+                r["group_id"] = get_group_id(r["utt_id"], r.get("group_id"))
             for r in test_rows:
                 r["speaker_id"] = get_speaker_id(r["utt_id"], r.get("speaker_id"))
-                r["video_id"] = get_video_id(r["utt_id"], r.get("video_id"))
+                r["group_id"] = get_group_id(r["utt_id"], r.get("group_id"))
                 
             train_speakers = list(set(r["speaker_id"] for r in train_rows if r["speaker_id"] is not None))
             test_speakers = list(set(r["speaker_id"] for r in test_rows if r["speaker_id"] is not None))
             
             logger.info(f"Split verified. Train: {len(train_rows)} utterances. Test: {len(test_rows)} utterances.")
         else:
-            has_explicit_split = any("split" in r and r["split"] in ["train", "test"] for r in filtered_rows)
-            if has_explicit_split:
-                logger.info("Using pre-defined split from 'split' column in the manifest.")
-                train_rows = [r for r in filtered_rows if r.get("split") == "train"]
-                test_rows = [r for r in filtered_rows if r.get("split") == "test"]
-                
-                for r in train_rows:
-                    r["speaker_id"] = get_speaker_id(r["utt_id"], r.get("speaker_id"))
-                    r["video_id"] = get_video_id(r["utt_id"], r.get("video_id"))
-                for r in test_rows:
-                    r["speaker_id"] = get_speaker_id(r["utt_id"], r.get("speaker_id"))
-                    r["video_id"] = get_video_id(r["utt_id"], r.get("video_id"))
-                    
-                train_speakers = list(set(r["speaker_id"] for r in train_rows if r["speaker_id"] is not None))
-                test_speakers = list(set(r["speaker_id"] for r in test_rows if r["speaker_id"] is not None))
-                
-                logger.info(f"Split verified. Train: {len(train_rows)} utterances. Test: {len(test_rows)} utterances.")
-            else:
-                train_rows, test_rows, train_speakers, test_speakers = split_dataset(
-                    filtered_rows, train_fraction=0.8, seed=args.seed, split_group=args.split_group
-                )
-                logger.info(f"Split completed. Train: {len(train_rows)} utterances. Test: {len(test_rows)} utterances.")
-                if args.split_group == "speaker":
-                    logger.info(f"Train speakers: {len(train_speakers)}. Test speakers: {len(test_speakers)}")
+            train_rows, test_rows, train_speakers, test_speakers = split_dataset(
+                filtered_rows, train_fraction=0.8, seed=args.seed, split_group=args.split_group
+            )
+            logger.info(f"Split completed. Train: {len(train_rows)} utterances. Test: {len(test_rows)} utterances.")
+            if args.split_group == "speaker":
+                logger.info(f"Train speakers: {len(train_speakers)}. Test speakers: {len(test_speakers)}")
     except Exception as e:
         logger.error(f"Dataset split failed: {e}")
         sys.exit(1)
@@ -408,19 +369,19 @@ def main():
     df_test_preds = pd.DataFrame(test_records)
     df_test_preds.to_csv(output_dir / "predictions.test.csv", index=False)
     
-    # 11. Evaluate test_real (Windowed prediction on held-out speaker/video material)
+    # 11. Evaluate test_real (Windowed prediction on held-out speaker/group material)
     logger.info("Running test_real windowed evaluation...")
-    windows_by_video = get_test_real_windows(test_rows, asr_results)
+    windows_by_group = get_test_real_windows(test_rows, asr_results)
     
     test_real_window_records = []
-    test_real_video_records = []
+    test_real_group_records = []
     
     window_count = 0
-    for vid, windows in windows_by_video.items():
-        video_ref_words_total = 0
-        video_true_acc_weighted_sum = 0.0
-        video_est_acc_weighted_sum = 0.0
-        video_n_windows = len(windows)
+    for gid, windows in windows_by_group.items():
+        group_ref_words_total = 0
+        group_true_acc_weighted_sum = 0.0
+        group_est_acc_weighted_sum = 0.0
+        group_n_windows = len(windows)
         
         for w_idx, win in enumerate(windows):
             # Concatenate CTC tokens/probs
@@ -446,7 +407,7 @@ def main():
                 win_est_acc = 0.0
                 
             test_real_window_records.append({
-                "sample_id": f"{vid}_w{w_idx}",
+                "sample_id": f"{gid}_w{w_idx}",
                 "split": "test_real_window",
                 "accuracy": win_true_acc,
                 "estimated_accuracy": win_est_acc,
@@ -455,35 +416,35 @@ def main():
             })
             
             # Weighted aggregation
-            video_ref_words_total += win_ref_words
-            video_true_acc_weighted_sum += win_ref_words * win_true_acc
-            video_est_acc_weighted_sum += win_ref_words * win_est_acc
+            group_ref_words_total += win_ref_words
+            group_true_acc_weighted_sum += win_ref_words * win_true_acc
+            group_est_acc_weighted_sum += win_ref_words * win_est_acc
             window_count += 1
             
-        if video_ref_words_total > 0:
-            video_true_acc = video_true_acc_weighted_sum / video_ref_words_total
-            video_est_acc = video_est_acc_weighted_sum / video_ref_words_total
+        if group_ref_words_total > 0:
+            group_true_acc = group_true_acc_weighted_sum / group_ref_words_total
+            group_est_acc = group_est_acc_weighted_sum / group_ref_words_total
             
-            test_real_video_records.append({
-                "sample_id": vid,
+            test_real_group_records.append({
+                "sample_id": gid,
                 "split": "test_real",
-                "accuracy": video_true_acc,
-                "estimated_accuracy": video_est_acc,
-                "residual": video_true_acc - video_est_acc,
-                "ref_words": video_ref_words_total,
-                "n_windows": video_n_windows
+                "accuracy": group_true_acc,
+                "estimated_accuracy": group_est_acc,
+                "residual": group_true_acc - group_est_acc,
+                "ref_words": group_ref_words_total,
+                "n_windows": group_n_windows
             })
             
     df_test_real_window = pd.DataFrame(test_real_window_records)
     df_test_real_window.to_csv(output_dir / "predictions.test_real_window.csv", index=False)
     
-    df_test_real_video = pd.DataFrame(test_real_video_records)
-    df_test_real_video.to_csv(output_dir / "predictions.test_real.csv", index=False)
+    df_test_real_group = pd.DataFrame(test_real_group_records)
+    df_test_real_group.to_csv(output_dir / "predictions.test_real.csv", index=False)
     
     # Compute test_real metrics
-    if not df_test_real_video.empty:
-        test_real_mae = float(np.mean(np.abs(df_test_real_video["accuracy"] - df_test_real_video["estimated_accuracy"])))
-        test_real_corr = safe_pearsonr(df_test_real_video["accuracy"], df_test_real_video["estimated_accuracy"])
+    if not df_test_real_group.empty:
+        test_real_mae = float(np.mean(np.abs(df_test_real_group["accuracy"] - df_test_real_group["estimated_accuracy"])))
+        test_real_corr = safe_pearsonr(df_test_real_group["accuracy"], df_test_real_group["estimated_accuracy"])
     else:
         test_real_mae = 0.0
         test_real_corr = None
@@ -502,9 +463,9 @@ def main():
     # Test_real windows
     for r in test_real_window_records:
         # Find features of this window
-        vid_w = r["sample_id"]
+        gid_w = r["sample_id"]
         # Retrieve window features (need to rebuild or we could have saved them, let's extract them here to keep it simple,
-        # or we could have saved them in the loop. Let's rebuild features from windows_by_video)
+        # or we could have saved them in the loop. Let's rebuild features from windows_by_group)
         pass
         
     # Actually, we can just save features for train and test ensemble samples since test_real features are similar,
@@ -551,12 +512,12 @@ def main():
     
     # Test_real scatter plot
     plt.figure(figsize=(6, 6))
-    if not df_test_real_video.empty:
-        plt.scatter(df_test_real_video["accuracy"], df_test_real_video["estimated_accuracy"], alpha=0.7, color="purple")
+    if not df_test_real_group.empty:
+        plt.scatter(df_test_real_group["accuracy"], df_test_real_group["estimated_accuracy"], alpha=0.7, color="purple")
     plt.plot([0, 1], [0, 1], color="red", linestyle="--")
     plt.xlabel("True Accuracy")
     plt.ylabel("Estimated Accuracy")
-    plt.title(f"Test_real Scatter (MAE={test_mae:.5f})" if df_test_real_video.empty else f"Test_real Video Scatter (MAE={test_real_mae:.5f})")
+    plt.title(f"Test_real Scatter (MAE={test_mae:.5f})" if df_test_real_group.empty else f"Test_real Group Scatter (MAE={test_real_mae:.5f})")
     plt.xlim(-0.05, 1.05)
     plt.ylim(-0.05, 1.05)
     plt.grid(True)
@@ -636,7 +597,7 @@ def main():
         "test_real": {
             "MAE": test_real_mae,
             "pearson_correlation": test_real_corr,
-            "n_points": len(df_test_real_video)
+            "n_points": len(df_test_real_group)
         }
     }
     with open(output_dir / "metrics.json", "w", encoding="utf-8") as f:

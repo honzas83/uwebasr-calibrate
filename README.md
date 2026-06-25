@@ -104,17 +104,14 @@ uwebasr-calibrate \
 
 ### Running on a Pre-split Dataset
 
-If your dataset is already split into training and testing sets, you can pass them separately using the `--test-dataset` option:
+If your dataset is already split into training and testing sets, you should provide a single manifest file containing a `split` field (with values `"train"` or `"test"`) for each row. The tool will automatically detect this split and use it for training and testing rather than partitioning the dataset by speaker. See [DATASET.md](DATASET.md) for more details.
 
 ```bash
 uwebasr-calibrate \
-  --dataset /path/to/train_manifest.json \
-  --test-dataset /path/to/test_manifest.json \
+  --dataset /path/to/manifest.json \
   --uwebasr-url https://uwebasr.zcu.cz/api/v2/speechcloud/generic/en/zipformer \
   --output-dir output_dir
 ```
-
-Alternatively, you can provide a single manifest file containing a `split` field (with value `"train"` or `"test"`) for each row (see [DATASET.md](DATASET.md)).
 
 
 ### Running on All Datasets

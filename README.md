@@ -4,7 +4,7 @@ Confidence calibration scripts for UWebASR speech recognition models.
 
 ## Motivation & Overview
 
-This package implements the confidence calibration workflow described in [CALIBRATION.md](file:///Users/honzas/Research.local/uwebasr-calibrate/CALIBRATION.md).
+This package implements the confidence calibration workflow described in [CALIBRATION.md](CALIBRATION.md).
 
 The primary goal is to provide a reproducible set of open scripts that build an accuracy regressor for any user-provided evaluation set and any selected UWebASR model. Users can run the calibration locally against their own labelled data and obtain a model-specific predictor of recognition accuracy, **without sharing reference transcripts** with the UWebASR team.
 

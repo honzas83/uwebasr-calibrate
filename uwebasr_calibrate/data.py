@@ -230,10 +230,13 @@ def generate_ref_spans(num_ref_words, min_words=10, max_words=256, rng=None):
         if limit < min_words:
             break
             
-        if rng is None:
-            length = random.randint(min_words, limit)
+        if limit <= min_words:
+            length = min_words
         else:
-            length = rng.randint(min_words, limit)
+            if rng is None:
+                length = random.randint(min_words, limit)
+            else:
+                length = rng.randint(min_words, limit + 1)
             
         spans.append((curr, curr + length))
         curr += length

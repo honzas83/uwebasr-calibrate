@@ -293,8 +293,8 @@ def main():
     
     # 7. Generate ensemble samples (64k train, 16k test)
     logger.info("Generating ensemble samples...")
-    train_samples, train_deciles_count = generate_ensemble_samples(train_segments, 64000, seed=args.seed)
-    test_samples, test_deciles_count = generate_ensemble_samples(test_segments, 16000, seed=args.seed)
+    train_samples, train_deciles_count = generate_ensemble_samples(train_segments, 64000, seed=args.seed, n_jobs=args.jobs)
+    test_samples, test_deciles_count = generate_ensemble_samples(test_segments, 16000, seed=args.seed, n_jobs=args.jobs)
     
     logger.info("Extracted features for ensemble samples.")
     

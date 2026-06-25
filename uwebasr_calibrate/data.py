@@ -6,6 +6,7 @@ import random
 from pathlib import Path
 import numpy as np
 import jiwer
+from joblib import Parallel, delayed
 
 from uwebasr_calibrate.normalizer import normalize_text, align_ref_and_hyp, TOKEN_RE
 from uwebasr_calibrate.asr import validate_asr_result
@@ -422,7 +423,37 @@ def sample_ensemble_single(deciles, target_words, min_segments, rng):
         
     return chosen_segs
 
-def generate_ensemble_samples(segments, sample_count, seed, target_words=512, min_segments=2):
+def _generate_single_sample(i, deciles, seed, target_words, min_segments):
+    sample_seed = int((seed + i * 2026) % (2**32))
+    sample_rng = np.random.RandomState(sample_seed)
+    
+    chosen_segs = sample_ensemble_single(deciles, target_words, min_segments, sample_rng)
+    
+    # Concatenate CTC tokens and probs
+    tokens_all = []
+    probs_all = []
+    edit_errors = 0
+    ref_words = 0
+    
+    for seg in chosen_segs:
+        tokens_all.extend(seg["ctc_tokens"])
+        probs_all.extend(seg["ctc_probs"])
+        edit_errors += seg["edit_errors"]
+        ref_words += seg["reference_words"]
+        
+    accuracy = max(0.0, 1.0 - edit_errors / ref_words)
+    
+    # Extract features
+    features = extract_features(tokens_all, probs_all)
+    
+    return {
+        "sample_id": f"sample_{i}",
+        "accuracy": accuracy,
+        "ref_words": ref_words,
+        "features": features
+    }
+
+def generate_ensemble_samples(segments, sample_count, seed, n_jobs=1, target_words=512, min_segments=2):
     """
     Generates sample_count ensemble samples.
     """
@@ -432,40 +463,11 @@ def generate_ensemble_samples(segments, sample_count, seed, target_words=512, mi
         
     logger.info(f"Formed {len(deciles)} non-empty quantiles for ensemble sampling")
     
-    rng = np.random.RandomState(seed)
+    samples = Parallel(n_jobs=n_jobs)(
+        delayed(_generate_single_sample)(i, deciles, seed, target_words, min_segments)
+        for i in range(sample_count)
+    )
     
-    samples = []
-    for i in range(sample_count):
-        # We can seed each sample generation deterministically based on seed and i
-        sample_seed = int((seed + i * 2026) % (2**32))
-        sample_rng = np.random.RandomState(sample_seed)
-        
-        chosen_segs = sample_ensemble_single(deciles, target_words, min_segments, sample_rng)
-        
-        # Concatenate CTC tokens and probs
-        tokens_all = []
-        probs_all = []
-        edit_errors = 0
-        ref_words = 0
-        
-        for seg in chosen_segs:
-            tokens_all.extend(seg["ctc_tokens"])
-            probs_all.extend(seg["ctc_probs"])
-            edit_errors += seg["edit_errors"]
-            ref_words += seg["reference_words"]
-            
-        accuracy = max(0.0, 1.0 - edit_errors / ref_words)
-        
-        # Extract features
-        features = extract_features(tokens_all, probs_all)
-        
-        samples.append({
-            "sample_id": f"sample_{i}",
-            "accuracy": accuracy,
-            "ref_words": ref_words,
-            "features": features
-        })
-        
     return samples, len(deciles)
 
 def get_test_real_windows(test_rows, asr_results):

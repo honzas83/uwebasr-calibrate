@@ -389,10 +389,13 @@ def run_calibration_workflow(args):
         # Logging ASR Accuracy Summary
         logger.info("--- ASR Accuracy Summary ---")
         
-        # Clean data (union of train clean and test clean)
-        clean_rows = train_rows_clean + test_rows
-        acc_clean, n_utts_clean = compute_overall_accuracy(clean_rows, df_utt_metrics)
-        logger.info(f"Original (clean): Acc={acc_clean:.5f} ({n_utts_clean} utts)")
+        # Clean train data
+        acc_train_clean, n_utts_train_clean = compute_overall_accuracy(train_rows_clean, df_utt_metrics)
+        logger.info(f"Original (clean) - train: Acc={acc_train_clean:.5f} ({n_utts_train_clean} utts)")
+        
+        # Clean test data
+        acc_test_clean, n_utts_test_clean = compute_overall_accuracy(test_rows, df_utt_metrics)
+        logger.info(f"Original (clean) - test: Acc={acc_test_clean:.5f} ({n_utts_test_clean} utts)")
         
         # Augmented data for each SNR
         if args.snr:

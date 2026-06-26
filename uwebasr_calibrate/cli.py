@@ -122,16 +122,10 @@ def get_dataset_label(dataset_paths, index):
     return f"dataset_{index}"
 
 def evaluate_windowed_predictions(windows_by_key, predictor, split_name, split_window_name):
-    window_records = []
-    agg_records = []
+    valid_windows_info = []
+    features_list = []
     
     for key, windows in windows_by_key.items():
-        agg_ref_words_total = 0
-        agg_hyp_words_total = 0
-        agg_true_acc_weighted_sum = 0.0
-        agg_est_acc_weighted_sum = 0.0
-        n_windows = len(windows)
-        
         for w_idx, win in enumerate(windows):
             win_tokens = []
             win_probs = []
@@ -153,29 +147,84 @@ def evaluate_windowed_predictions(windows_by_key, predictor, split_name, split_w
             
             try:
                 win_features = extract_features(win_tokens, win_probs)
-                win_est_acc = float(predictor.predict([win_features])[0])
+                features_list.append(win_features)
+                has_features = True
             except Exception as e:
-                logger.warning(f"Failed to extract features or predict for window: {e}. Using fallback prediction 0.0")
-                win_est_acc = 0.0
+                logger.warning(f"Failed to extract features for window {key}_w{w_idx}: {e}. Using fallback prediction 0.0")
+                has_features = False
                 
-            window_records.append({
-                "sample_id": f"{key}_w{w_idx}",
-                "split": split_window_name,
-                "accuracy": win_true_acc,
-                "estimated_accuracy": win_est_acc,
-                "residual": win_true_acc - win_est_acc,
+            valid_windows_info.append({
+                "key": key,
+                "w_idx": w_idx,
+                "n_windows": len(windows),
+                "true_acc": win_true_acc,
                 "ref_words": win_ref_words,
-                "hyp_words": win_hyp_words
+                "hyp_words": win_hyp_words,
+                "has_features": has_features
             })
             
-            agg_ref_words_total += win_ref_words
-            agg_hyp_words_total += win_hyp_words
-            agg_true_acc_weighted_sum += win_hyp_words * win_true_acc
-            agg_est_acc_weighted_sum += win_hyp_words * win_est_acc
+    preds = []
+    if features_list:
+        try:
+            preds = list(predictor.predict(np.array(features_list)))
+        except Exception as e:
+            logger.error(f"Bulk prediction failed: {e}. Falling back to individual predictions.")
+            preds = []
+            for f in features_list:
+                try:
+                    preds.append(float(predictor.predict([f])[0]))
+                except Exception:
+                    preds.append(0.0)
+                    
+    window_records = []
+    agg_stats = {}
+    
+    pred_idx = 0
+    for info in valid_windows_info:
+        key = info["key"]
+        w_idx = info["w_idx"]
+        
+        if info["has_features"] and pred_idx < len(preds):
+            win_est_acc = float(preds[pred_idx])
+            pred_idx += 1
+        else:
+            win_est_acc = 0.0
             
+        win_true_acc = info["true_acc"]
+        win_ref_words = info["ref_words"]
+        win_hyp_words = info["hyp_words"]
+        
+        window_records.append({
+            "sample_id": f"{key}_w{w_idx}",
+            "split": split_window_name,
+            "accuracy": win_true_acc,
+            "estimated_accuracy": win_est_acc,
+            "residual": win_true_acc - win_est_acc,
+            "ref_words": win_ref_words,
+            "hyp_words": win_hyp_words
+        })
+        
+        if key not in agg_stats:
+            agg_stats[key] = {
+                "ref_words_total": 0,
+                "hyp_words_total": 0,
+                "true_acc_weighted_sum": 0.0,
+                "est_acc_weighted_sum": 0.0,
+                "n_windows": info["n_windows"]
+            }
+            
+        stats = agg_stats[key]
+        stats["ref_words_total"] += win_ref_words
+        stats["hyp_words_total"] += win_hyp_words
+        stats["true_acc_weighted_sum"] += win_hyp_words * win_true_acc
+        stats["est_acc_weighted_sum"] += win_hyp_words * win_est_acc
+        
+    agg_records = []
+    for key, stats in agg_stats.items():
+        agg_hyp_words_total = stats["hyp_words_total"]
         if agg_hyp_words_total > 0:
-            agg_true_acc = agg_true_acc_weighted_sum / agg_hyp_words_total
-            agg_est_acc = agg_est_acc_weighted_sum / agg_hyp_words_total
+            agg_true_acc = stats["true_acc_weighted_sum"] / agg_hyp_words_total
+            agg_est_acc = stats["est_acc_weighted_sum"] / agg_hyp_words_total
             
             agg_records.append({
                 "sample_id": key,
@@ -183,12 +232,13 @@ def evaluate_windowed_predictions(windows_by_key, predictor, split_name, split_w
                 "accuracy": agg_true_acc,
                 "estimated_accuracy": agg_est_acc,
                 "residual": agg_true_acc - agg_est_acc,
-                "ref_words": agg_ref_words_total,
+                "ref_words": stats["ref_words_total"],
                 "hyp_words": agg_hyp_words_total,
-                "n_windows": n_windows
+                "n_windows": stats["n_windows"]
             })
             
     return pd.DataFrame(window_records), pd.DataFrame(agg_records)
+
 
 def compute_overall_accuracy(rows, df_utt_metrics):
     utt_ids = {r["utt_id"] for r in rows}

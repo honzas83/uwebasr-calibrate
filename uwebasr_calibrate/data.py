@@ -490,16 +490,16 @@ def generate_ensemble_samples(segments, sample_count, seed, n_jobs=1, min_words=
         
     return samples, len(deciles)
 
-def get_test_real_windows(test_rows, asr_results, window_size=512):
+def get_test_real_windows(test_rows, asr_results, window_size=512, group_key="group_id"):
     """
     Converts test_rows into test_real speaker/group windows of approx window_size words.
     Returns window data ready for feature extraction.
     """
-    # Group by group_id
+    # Group by group_key
     from collections import defaultdict
     group_groups = defaultdict(list)
     for row in test_rows:
-        group_groups[row["group_id"]].append(row)
+        group_groups[row[group_key]].append(row)
         
     windows_by_group = {}
     

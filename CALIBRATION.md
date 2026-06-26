@@ -1023,17 +1023,26 @@ predictions.validation.csv
 predictions.test.csv
 predictions.test_real_window.csv
 predictions.test_real.csv
+predictions.test_real_part_window.csv
+predictions.test_real_part.csv
 metrics.json
 model/
 plots/
+  scatter_validation.png
+  scatter_test.png
+  scatter_test_real.png
+  scatter_test_real_part.png
 <dataset_label_1>/
   predictions.test.csv
   predictions.test_real.csv
   predictions.test_real_window.csv
+  predictions.test_real_part.csv
+  predictions.test_real_part_window.csv
   metrics.json
   plots/
     scatter_test.png
     scatter_test_real.png
+    scatter_test_real_part.png
 <dataset_label_2>/
   ...
 ```
@@ -1065,10 +1074,7 @@ residual
 ref_words
 ```
 
-For `predictions.test_real.csv`, `sample_id` is the speaker/group ID and
-the file should also include `n_windows`. `metrics.json` must include MAE, MSE, and
-Pearson correlation for `validation`, `test`, and aggregated `test_real`, plus
-the number of points used in each metric.
+For `predictions.test_real.csv`, `sample_id` is the speaker/group ID, and for `predictions.test_real_part.csv`, `sample_id` is the individual utterance ID. Both files include `n_windows` for each aggregated item. `metrics.json` must include MAE, MSE, and Pearson correlation for `validation`, `test`, aggregated `test_real` (grouped), and aggregated `test_real_part` (ungrouped), plus the number of points used in each metric.
 
 `config.json` must record all user-provided arguments, random seeds, endpoint
 URL, target segment count, selected split groups, normalizer version, feature

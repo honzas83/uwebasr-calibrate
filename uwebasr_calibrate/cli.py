@@ -114,6 +114,69 @@ def get_dataset_label(dataset_paths, index):
         return name
     return f"dataset_{index}"
 
+def evaluate_windowed_predictions(windows_by_key, predictor, split_name, split_window_name):
+    window_records = []
+    agg_records = []
+    
+    for key, windows in windows_by_key.items():
+        agg_ref_words_total = 0
+        agg_true_acc_weighted_sum = 0.0
+        agg_est_acc_weighted_sum = 0.0
+        n_windows = len(windows)
+        
+        for w_idx, win in enumerate(windows):
+            win_tokens = []
+            win_probs = []
+            win_errors = 0
+            win_ref_words = 0
+            
+            for chunk in win:
+                win_tokens.extend(chunk["ctc_tokens"])
+                win_probs.extend(chunk["ctc_probs"])
+                win_errors += chunk["edit_errors"]
+                win_ref_words += chunk["reference_words"]
+                
+            if win_ref_words == 0:
+                continue
+                
+            win_true_acc = max(0.0, 1.0 - win_errors / win_ref_words)
+            
+            try:
+                win_features = extract_features(win_tokens, win_probs)
+                win_est_acc = float(predictor.predict([win_features])[0])
+            except Exception as e:
+                logger.warning(f"Failed to extract features or predict for window: {e}. Using fallback prediction 0.0")
+                win_est_acc = 0.0
+                
+            window_records.append({
+                "sample_id": f"{key}_w{w_idx}",
+                "split": split_window_name,
+                "accuracy": win_true_acc,
+                "estimated_accuracy": win_est_acc,
+                "residual": win_true_acc - win_est_acc,
+                "ref_words": win_ref_words
+            })
+            
+            agg_ref_words_total += win_ref_words
+            agg_true_acc_weighted_sum += win_ref_words * win_true_acc
+            agg_est_acc_weighted_sum += win_ref_words * win_est_acc
+            
+        if agg_ref_words_total > 0:
+            agg_true_acc = agg_true_acc_weighted_sum / agg_ref_words_total
+            agg_est_acc = agg_est_acc_weighted_sum / agg_ref_words_total
+            
+            agg_records.append({
+                "sample_id": key,
+                "split": split_name,
+                "accuracy": agg_true_acc,
+                "estimated_accuracy": agg_est_acc,
+                "residual": agg_true_acc - agg_est_acc,
+                "ref_words": agg_ref_words_total,
+                "n_windows": n_windows
+            })
+            
+    return pd.DataFrame(window_records), pd.DataFrame(agg_records)
+
 def run_calibration_workflow(args):
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -408,77 +471,16 @@ def run_calibration_workflow(args):
         df_test_preds = pd.DataFrame(test_records)
         df_test_preds.to_csv(output_dir / "predictions.test.csv", index=False)
         
-        # 11. Evaluate test_real (Windowed prediction on held-out speaker/group material)
-        logger.info("Running test_real windowed evaluation...")
+        # 11. Evaluate test_real (Windowed prediction grouped by group_id)
+        logger.info("Running test_real windowed evaluation (grouped by group_id)...")
         test_real_window_size = (args.ensemble_min_words + args.ensemble_max_words) // 2
-        windows_by_group = get_test_real_windows(test_rows, asr_results, window_size=test_real_window_size)
+        windows_by_group = get_test_real_windows(test_rows, asr_results, window_size=test_real_window_size, group_key="group_id")
         
-        test_real_window_records = []
-        test_real_group_records = []
+        df_test_real_window, df_test_real_group = evaluate_windowed_predictions(
+            windows_by_group, predictor, "test_real", "test_real_window"
+        )
         
-        window_count = 0
-        for gid, windows in windows_by_group.items():
-            group_ref_words_total = 0
-            group_true_acc_weighted_sum = 0.0
-            group_est_acc_weighted_sum = 0.0
-            group_n_windows = len(windows)
-            
-            for w_idx, win in enumerate(windows):
-                # Concatenate CTC tokens/probs
-                win_tokens = []
-                win_probs = []
-                win_errors = 0
-                win_ref_words = 0
-                
-                for chunk in win:
-                    win_tokens.extend(chunk["ctc_tokens"])
-                    win_probs.extend(chunk["ctc_probs"])
-                    win_errors += chunk["edit_errors"]
-                    win_ref_words += chunk["reference_words"]
-                    
-                win_true_acc = max(0.0, 1.0 - win_errors / win_ref_words)
-                
-                # Extract features for window
-                try:
-                    win_features = extract_features(win_tokens, win_probs)
-                    win_est_acc = float(predictor.predict([win_features])[0])
-                except Exception as e:
-                    logger.warning(f"Failed to extract features or predict for test_real window: {e}. Using fallback prediction 0.0")
-                    win_est_acc = 0.0
-                    
-                test_real_window_records.append({
-                    "sample_id": f"{gid}_w{w_idx}",
-                    "split": "test_real_window",
-                    "accuracy": win_true_acc,
-                    "estimated_accuracy": win_est_acc,
-                    "residual": win_true_acc - win_est_acc,
-                    "ref_words": win_ref_words
-                })
-                
-                # Weighted aggregation
-                group_ref_words_total += win_ref_words
-                group_true_acc_weighted_sum += win_ref_words * win_true_acc
-                group_est_acc_weighted_sum += win_ref_words * win_est_acc
-                window_count += 1
-                
-            if group_ref_words_total > 0:
-                group_true_acc = group_true_acc_weighted_sum / group_ref_words_total
-                group_est_acc = group_est_acc_weighted_sum / group_ref_words_total
-                
-                test_real_group_records.append({
-                    "sample_id": gid,
-                    "split": "test_real",
-                    "accuracy": group_true_acc,
-                    "estimated_accuracy": group_est_acc,
-                    "residual": group_true_acc - group_est_acc,
-                    "ref_words": group_ref_words_total,
-                    "n_windows": group_n_windows
-                })
-                
-        df_test_real_window = pd.DataFrame(test_real_window_records)
         df_test_real_window.to_csv(output_dir / "predictions.test_real_window.csv", index=False)
-        
-        df_test_real_group = pd.DataFrame(test_real_group_records)
         df_test_real_group.to_csv(output_dir / "predictions.test_real.csv", index=False)
         
         # Compute test_real metrics
@@ -493,6 +495,29 @@ def run_calibration_workflow(args):
             
         logger.info(f"Test_real results: MAE={test_real_mae:.5f}, MSE={test_real_mse:.5f}, corr={test_real_corr}")
         
+        # 11b. Evaluate test_real_part (Windowed prediction on individual utterances, ungrouped)
+        logger.info("Running test_real_part windowed evaluation (ungrouped)...")
+        windows_by_utt = get_test_real_windows(test_rows, asr_results, window_size=test_real_window_size, group_key="utt_id")
+        
+        df_test_real_part_window, df_test_real_part_utt = evaluate_windowed_predictions(
+            windows_by_utt, predictor, "test_real_part", "test_real_part_window"
+        )
+        
+        df_test_real_part_window.to_csv(output_dir / "predictions.test_real_part_window.csv", index=False)
+        df_test_real_part_utt.to_csv(output_dir / "predictions.test_real_part.csv", index=False)
+        
+        # Compute test_real_part metrics
+        if not df_test_real_part_utt.empty:
+            test_real_part_mae = float(np.mean(np.abs(df_test_real_part_utt["accuracy"] - df_test_real_part_utt["estimated_accuracy"])))
+            test_real_part_mse = float(np.mean((df_test_real_part_utt["accuracy"] - df_test_real_part_utt["estimated_accuracy"]) ** 2))
+            test_real_part_corr = safe_pearsonr(df_test_real_part_utt["accuracy"], df_test_real_part_utt["estimated_accuracy"])
+        else:
+            test_real_part_mae = 0.0
+            test_real_part_mse = 0.0
+            test_real_part_corr = None
+            
+        logger.info(f"Test_real_part results: MAE={test_real_part_mae:.5f}, MSE={test_real_part_mse:.5f}, corr={test_real_part_corr}")
+        
         # 12. Save features.csv (for inspection/reproducibility)
         # Build list of feature rows
         feat_rows = []
@@ -503,12 +528,7 @@ def run_calibration_workflow(args):
         for s in test_samples:
             feat_rows.append([s["sample_id"], "test", s["accuracy"]] + s["features"])
         # Test_real windows
-        for r in test_real_window_records:
-            # Find features of this window
-            gid_w = r["sample_id"]
-            # Retrieve window features (need to rebuild or we could have saved them, let's extract them here to keep it simple,
-            # or we could have saved them in the loop. Let's rebuild features from windows_by_group)
-            pass
+        # Actually, we can just save features for train and test ensemble samples to keep features.csv size manageable (~80k rows, 23 columns).
             
         # Actually, we can just save features for train and test ensemble samples to keep features.csv size manageable (~80k rows, 23 columns).
         df_features = pd.DataFrame(
@@ -562,6 +582,21 @@ def run_calibration_workflow(args):
         plt.grid(True)
         plt.tight_layout()
         plt.savefig(plots_dir / "scatter_test_real.png")
+        plt.close()
+        
+        # Test_real_part scatter plot
+        plt.figure(figsize=(6, 6))
+        if not df_test_real_part_utt.empty:
+            plt.scatter(df_test_real_part_utt["accuracy"], df_test_real_part_utt["estimated_accuracy"], alpha=0.5, color="orange")
+        plt.plot([0, 1], [0, 1], color="red", linestyle="--")
+        plt.xlabel("True Accuracy")
+        plt.ylabel("Estimated Accuracy")
+        plt.title(f"Test_real_part Scatter (MSE={test_real_part_mse:.5f})" if df_test_real_part_utt.empty else f"Test_real_part Scatter (MAE={test_real_part_mae:.5f}, MSE={test_real_part_mse:.5f})")
+        plt.xlim(-0.05, 1.05)
+        plt.ylim(-0.05, 1.05)
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig(plots_dir / "scatter_test_real_part.png")
         plt.close()
         
         logger.info("Saved scatter plots.")
@@ -648,6 +683,12 @@ def run_calibration_workflow(args):
                 "MSE": test_real_mse,
                 "pearson_correlation": test_real_corr,
                 "n_points": len(df_test_real_group)
+            },
+            "test_real_part": {
+                "MAE": test_real_part_mae,
+                "MSE": test_real_part_mse,
+                "pearson_correlation": test_real_part_corr,
+                "n_points": len(df_test_real_part_utt)
             }
         }
         with open(output_dir / "metrics.json", "w", encoding="utf-8") as f:
@@ -656,8 +697,9 @@ def run_calibration_workflow(args):
         # 17. Dataset-specific reports for multi-dataset scenario
         if n_datasets > 1:
             logger.info("Generating dataset-specific reports for multi-dataset scenario...")
-            # Map group_id to dataset_idx
+            # Map group_id and utt_id to dataset_idx
             group_to_dataset = {r["group_id"]: r["dataset_idx"] for r in filtered_rows if r.get("group_id") is not None}
+            utt_to_dataset = {r["utt_id"]: r["dataset_idx"] for r in filtered_rows}
             
             for i in range(n_datasets):
                 # Determine dataset directory name/label
@@ -730,6 +772,26 @@ def run_calibration_workflow(args):
                     ds_test_real_mae = 0.0
                     ds_test_real_mse = 0.0
                     ds_test_real_corr = None
+                    
+                # Filter test_real_part predictions for this dataset
+                ds_test_real_part_utt = df_test_real_part_utt[
+                    df_test_real_part_utt["sample_id"].map(utt_to_dataset) == i
+                ]
+                ds_test_real_part_window = df_test_real_part_window[
+                    df_test_real_part_window["sample_id"].apply(lambda x: utt_to_dataset.get(x.rsplit('_w', 1)[0])) == i
+                ]
+                
+                ds_test_real_part_utt.to_csv(ds_output_dir / "predictions.test_real_part.csv", index=False)
+                ds_test_real_part_window.to_csv(ds_output_dir / "predictions.test_real_part_window.csv", index=False)
+                
+                if not ds_test_real_part_utt.empty:
+                    ds_test_real_part_mae = float(np.mean(np.abs(ds_test_real_part_utt["accuracy"] - ds_test_real_part_utt["estimated_accuracy"])))
+                    ds_test_real_part_mse = float(np.mean((ds_test_real_part_utt["accuracy"] - ds_test_real_part_utt["estimated_accuracy"]) ** 2))
+                    ds_test_real_part_corr = safe_pearsonr(ds_test_real_part_utt["accuracy"], ds_test_real_part_utt["estimated_accuracy"])
+                else:
+                    ds_test_real_part_mae = 0.0
+                    ds_test_real_part_mse = 0.0
+                    ds_test_real_part_corr = None
                 
                 # Save metrics.json for this dataset
                 ds_metrics = {
@@ -744,6 +806,12 @@ def run_calibration_workflow(args):
                         "MSE": ds_test_real_mse,
                         "pearson_correlation": ds_test_real_corr,
                         "n_points": len(ds_test_real_group)
+                    },
+                    "test_real_part": {
+                        "MAE": ds_test_real_part_mae,
+                        "MSE": ds_test_real_part_mse,
+                        "pearson_correlation": ds_test_real_part_corr,
+                        "n_points": len(ds_test_real_part_utt)
                     }
                 }
                 with open(ds_output_dir / "metrics.json", "w", encoding="utf-8") as f:
@@ -781,6 +849,21 @@ def run_calibration_workflow(args):
                 plt.grid(True)
                 plt.tight_layout()
                 plt.savefig(ds_plots_dir / "scatter_test_real.png")
+                plt.close()
+                
+                # Test_real_part scatter plot
+                plt.figure(figsize=(6, 6))
+                if not ds_test_real_part_utt.empty:
+                    plt.scatter(ds_test_real_part_utt["accuracy"], ds_test_real_part_utt["estimated_accuracy"], alpha=0.5, color="orange")
+                plt.plot([0, 1], [0, 1], color="red", linestyle="--")
+                plt.xlabel("True Accuracy")
+                plt.ylabel("Estimated Accuracy")
+                plt.title(f"Test_real_part Scatter - {dataset_label} (MAE={ds_test_real_part_mae:.5f}, MSE={ds_test_real_part_mse:.5f})")
+                plt.xlim(-0.05, 1.05)
+                plt.ylim(-0.05, 1.05)
+                plt.grid(True)
+                plt.tight_layout()
+                plt.savefig(ds_plots_dir / "scatter_test_real_part.png")
                 plt.close()
                 
                 logger.info(f"Saved dataset-specific report for {dataset_label} to {ds_output_dir}")

@@ -1,7 +1,6 @@
 import os
 import logging
 import numpy as np
-from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import train_test_split
@@ -11,17 +10,15 @@ logger = logging.getLogger(__name__)
 
 class CalibratedPredictor:
     """
-    Combines feature standardization, HistGradientBoostingRegressor, and affine calibration.
+    Combines HistGradientBoostingRegressor and affine calibration.
     """
-    def __init__(self, scaler, model, a, b):
-        self.scaler = scaler
+    def __init__(self, model, a, b):
         self.model = model
         self.a = a
         self.b = b
         
     def predict(self, X):
-        X_scaled = self.scaler.transform(X)
-        raw_pred = self.model.predict(X_scaled)
+        raw_pred = self.model.predict(X)
         calibrated_pred = self.a + self.b * raw_pred
         return np.clip(calibrated_pred, 0.0, 1.0)
 
@@ -68,16 +65,11 @@ def train_calibration_model(train_samples, seed=13, loss_metric="mae"):
                         "random_state": seed
                     }
                     
-                    # Fit preprocessing on fit subset only
-                    scaler = StandardScaler()
-                    X_fit_scaled = scaler.fit_transform(X_fit)
-                    X_val_scaled = scaler.transform(X_val)
-                    
                     model = HistGradientBoostingRegressor(**params)
-                    model.fit(X_fit_scaled, y_fit)
+                    model.fit(X_fit, y_fit)
                     
                     # Evaluate on validation
-                    val_pred = model.predict(X_val_scaled)
+                    val_pred = model.predict(X_val)
                     if loss_metric == "mae":
                         val_score = np.mean(np.abs(y_val - val_pred))
                     else:
@@ -92,14 +84,11 @@ def train_calibration_model(train_samples, seed=13, loss_metric="mae"):
     logger.info(f"Best params: {best_params} with Val {loss_metric.upper()}: {best_val_score:.5f}")
     
     # Refit on the complete train partition
-    final_scaler = StandardScaler()
-    X_scaled = final_scaler.fit_transform(X)
-    
     final_model = HistGradientBoostingRegressor(**best_params)
-    final_model.fit(X_scaled, y)
+    final_model.fit(X, y)
     
     # Get final model's predictions on complete train partition for affine calibration
-    train_raw_preds = final_model.predict(X_scaled)
+    train_raw_preds = final_model.predict(X)
     
     # Fit affine calibration (Linear Regression)
     lr_calib = LinearRegression()
@@ -111,12 +100,10 @@ def train_calibration_model(train_samples, seed=13, loss_metric="mae"):
     logger.info(f"Fitted affine calibration: Acc_hat = clip({a:.5f} + {b:.5f} * HGBR_pred, 0, 1)")
     
     # Create final calibrated predictor
-    predictor = CalibratedPredictor(final_scaler, final_model, a, b)
+    predictor = CalibratedPredictor(final_model, a, b)
     
     # Get validation predictions with the final calibrated model
-    # (using the same train-internal split used for grid search)
-    X_val_scaled_final = final_scaler.transform(X_val)
-    val_pred_raw = final_model.predict(X_val_scaled_final)
+    val_pred_raw = final_model.predict(X_val)
     val_pred_calib = np.clip(a + b * val_pred_raw, 0.0, 1.0)
     
     return predictor, best_params, best_val_score, val_pred_calib, y_val

@@ -504,7 +504,12 @@ def run_calibration_workflow(args):
         logger.info("Saved segments.csv")
         
         # 7. Generate ensemble samples
-        logger.info("Generating ensemble samples...")
+        logger.info(
+            f"Generating ensemble samples (train target: {args.target_ensemble}, "
+            f"test target: {args.target_ensemble // 4}, "
+            f"words: [{args.ensemble_min_words}, {args.ensemble_max_words}], "
+            f"min_segments: {args.ensemble_min_segments})..."
+        )
         train_samples, train_deciles_count = generate_ensemble_samples(
             train_segments, args.target_ensemble, seed=args.seed, n_jobs=args.jobs,
             min_words=args.ensemble_min_words, max_words=args.ensemble_max_words, min_segments=args.ensemble_min_segments
@@ -753,10 +758,10 @@ def run_calibration_workflow(args):
         
         # Validation scatter plot
         plt.figure(figsize=(6, 6))
-        plt.scatter(df_val_preds["accuracy"], df_val_preds["estimated_accuracy"], alpha=0.3, color="blue")
+        plt.scatter(df_val_preds["estimated_accuracy"], df_val_preds["accuracy"], alpha=0.3, color="blue")
         plt.plot([0, 1], [0, 1], color="red", linestyle="--")
-        plt.xlabel("True Accuracy")
-        plt.ylabel("Estimated Accuracy")
+        plt.xlabel("Estimated Accuracy")
+        plt.ylabel("True Accuracy")
         plt.title(f"Validation Scatter (MAE={val_mae:.5f}, MSE={val_mse:.5f})")
         plt.xlim(-0.05, 1.05)
         plt.ylim(-0.05, 1.05)
@@ -767,10 +772,10 @@ def run_calibration_workflow(args):
         
         # Test scatter plot
         plt.figure(figsize=(6, 6))
-        plt.scatter(df_test_preds["accuracy"], df_test_preds["estimated_accuracy"], alpha=0.3, color="green")
+        plt.scatter(df_test_preds["estimated_accuracy"], df_test_preds["accuracy"], alpha=0.3, color="green")
         plt.plot([0, 1], [0, 1], color="red", linestyle="--")
-        plt.xlabel("True Accuracy")
-        plt.ylabel("Estimated Accuracy")
+        plt.xlabel("Estimated Accuracy")
+        plt.ylabel("True Accuracy")
         plt.title(f"Test Scatter (MAE={test_mae:.5f}, MSE={test_mse:.5f})")
         plt.xlim(-0.05, 1.05)
         plt.ylim(-0.05, 1.05)
@@ -782,10 +787,10 @@ def run_calibration_workflow(args):
         # Test_real scatter plot
         plt.figure(figsize=(6, 6))
         if not df_test_real_group.empty:
-            plt.scatter(df_test_real_group["accuracy"], df_test_real_group["estimated_accuracy"], alpha=0.7, color="purple")
+            plt.scatter(df_test_real_group["estimated_accuracy"], df_test_real_group["accuracy"], alpha=0.7, color="purple")
         plt.plot([0, 1], [0, 1], color="red", linestyle="--")
-        plt.xlabel("True Accuracy")
-        plt.ylabel("Estimated Accuracy")
+        plt.xlabel("Estimated Accuracy")
+        plt.ylabel("True Accuracy")
         plt.title(f"Test_real Scatter (MSE={test_real_mse:.5f})" if df_test_real_group.empty else f"Test_real Group Scatter (MAE={test_real_mae:.5f}, MSE={test_real_mse:.5f})")
         plt.xlim(-0.05, 1.05)
         plt.ylim(-0.05, 1.05)
@@ -797,10 +802,10 @@ def run_calibration_workflow(args):
         # Test_real_part scatter plot
         plt.figure(figsize=(6, 6))
         if not df_test_real_part_utt.empty:
-            plt.scatter(df_test_real_part_utt["accuracy"], df_test_real_part_utt["estimated_accuracy"], alpha=0.5, color="orange")
+            plt.scatter(df_test_real_part_utt["estimated_accuracy"], df_test_real_part_utt["accuracy"], alpha=0.5, color="orange")
         plt.plot([0, 1], [0, 1], color="red", linestyle="--")
-        plt.xlabel("True Accuracy")
-        plt.ylabel("Estimated Accuracy")
+        plt.xlabel("Estimated Accuracy")
+        plt.ylabel("True Accuracy")
         plt.title(f"Test_real_part Scatter (MSE={test_real_part_mse:.5f})" if df_test_real_part_utt.empty else f"Test_real_part Scatter (MAE={test_real_part_mae:.5f}, MSE={test_real_part_mse:.5f})")
         plt.xlim(-0.05, 1.05)
         plt.ylim(-0.05, 1.05)
@@ -812,10 +817,10 @@ def run_calibration_workflow(args):
         # Test_real_snr scatter plot
         plt.figure(figsize=(6, 6))
         if not df_test_real_snr_group.empty:
-            plt.scatter(df_test_real_snr_group["accuracy"], df_test_real_snr_group["estimated_accuracy"], alpha=0.7, color="teal")
+            plt.scatter(df_test_real_snr_group["estimated_accuracy"], df_test_real_snr_group["accuracy"], alpha=0.7, color="teal")
         plt.plot([0, 1], [0, 1], color="red", linestyle="--")
-        plt.xlabel("True Accuracy")
-        plt.ylabel("Estimated Accuracy")
+        plt.xlabel("Estimated Accuracy")
+        plt.ylabel("True Accuracy")
         plt.title(f"Test_real_snr Scatter (MSE={test_real_snr_mse:.5f})" if df_test_real_snr_group.empty else f"Test_real_snr Group Scatter (MAE={test_real_snr_mae:.5f}, MSE={test_real_snr_mse:.5f})")
         plt.xlim(-0.05, 1.05)
         plt.ylim(-0.05, 1.05)
@@ -827,10 +832,10 @@ def run_calibration_workflow(args):
         # Test_real_part_snr scatter plot
         plt.figure(figsize=(6, 6))
         if not df_test_real_part_snr_utt.empty:
-            plt.scatter(df_test_real_part_snr_utt["accuracy"], df_test_real_part_snr_utt["estimated_accuracy"], alpha=0.5, color="brown")
+            plt.scatter(df_test_real_part_snr_utt["estimated_accuracy"], df_test_real_part_snr_utt["accuracy"], alpha=0.5, color="brown")
         plt.plot([0, 1], [0, 1], color="red", linestyle="--")
-        plt.xlabel("True Accuracy")
-        plt.ylabel("Estimated Accuracy")
+        plt.xlabel("Estimated Accuracy")
+        plt.ylabel("True Accuracy")
         plt.title(f"Test_real_part_snr Scatter (MSE={test_real_part_snr_mse:.5f})" if df_test_real_part_snr_utt.empty else f"Test_real_part_snr Scatter (MAE={test_real_part_snr_mae:.5f}, MSE={test_real_part_snr_mse:.5f})")
         plt.xlim(-0.05, 1.05)
         plt.ylim(-0.05, 1.05)
@@ -848,10 +853,10 @@ def run_calibration_workflow(args):
                 
                 plt.figure(figsize=(6, 6))
                 if not df_group_s.empty:
-                    plt.scatter(df_group_s["accuracy"], df_group_s["estimated_accuracy"], alpha=0.7, color="teal")
+                    plt.scatter(df_group_s["estimated_accuracy"], df_group_s["accuracy"], alpha=0.7, color="teal")
                 plt.plot([0, 1], [0, 1], color="red", linestyle="--")
-                plt.xlabel("True Accuracy")
-                plt.ylabel("Estimated Accuracy")
+                plt.xlabel("Estimated Accuracy")
+                plt.ylabel("True Accuracy")
                 plt.title(f"Test_real_snr_{snr_str} Scatter (MSE={info['group_mse']:.5f})" if df_group_s.empty else f"Test_real_snr_{snr_str} Group Scatter (MAE={info['group_mae']:.5f}, MSE={info['group_mse']:.5f})")
                 plt.xlim(-0.05, 1.05)
                 plt.ylim(-0.05, 1.05)
@@ -862,10 +867,10 @@ def run_calibration_workflow(args):
                 
                 plt.figure(figsize=(6, 6))
                 if not df_utt_s.empty:
-                    plt.scatter(df_utt_s["accuracy"], df_utt_s["estimated_accuracy"], alpha=0.5, color="brown")
+                    plt.scatter(df_utt_s["estimated_accuracy"], df_utt_s["accuracy"], alpha=0.5, color="brown")
                 plt.plot([0, 1], [0, 1], color="red", linestyle="--")
-                plt.xlabel("True Accuracy")
-                plt.ylabel("Estimated Accuracy")
+                plt.xlabel("Estimated Accuracy")
+                plt.ylabel("True Accuracy")
                 plt.title(f"Test_real_part_snr_{snr_str} Scatter (MSE={info['utt_mse']:.5f})" if df_utt_s.empty else f"Test_real_part_snr_{snr_str} Scatter (MAE={info['utt_mae']:.5f}, MSE={info['utt_mse']:.5f})")
                 plt.xlim(-0.05, 1.05)
                 plt.ylim(-0.05, 1.05)
@@ -890,8 +895,8 @@ def run_calibration_workflow(args):
                 "split_group": args.split_group,
                 "loss": args.loss,
                 "train_fraction": 0.8,
-                "ensemble_train_size": 64000,
-                "ensemble_test_size": 16000,
+                "ensemble_train_size": args.target_ensemble,
+                "ensemble_test_size": args.target_ensemble // 4,
                 "ensemble_min_words": args.ensemble_min_words,
                 "ensemble_max_words": args.ensemble_max_words,
                 "ensemble_min_segments": args.ensemble_min_segments,
@@ -1031,6 +1036,11 @@ def run_calibration_workflow(args):
                     y_ds_test = []
                 else:
                     # Generate test ensemble samples for this dataset
+                    logger.info(
+                        f"Generating dataset test ensemble samples (target: {args.target_ensemble // 4}, "
+                        f"words: [{args.ensemble_min_words}, {args.ensemble_max_words}], "
+                        f"min_segments: {args.ensemble_min_segments})..."
+                    )
                     ds_test_samples, _ = generate_ensemble_samples(
                         ds_test_segments, args.target_ensemble // 4, seed=args.seed, n_jobs=args.jobs,
                         min_words=args.ensemble_min_words, max_words=args.ensemble_max_words, min_segments=args.ensemble_min_segments
@@ -1268,10 +1278,10 @@ def run_calibration_workflow(args):
                 # Test scatter plot
                 if not ds_test_preds.empty:
                     plt.figure(figsize=(6, 6))
-                    plt.scatter(ds_test_preds["accuracy"], ds_test_preds["estimated_accuracy"], alpha=0.3, color="green")
+                    plt.scatter(ds_test_preds["estimated_accuracy"], ds_test_preds["accuracy"], alpha=0.3, color="green")
                     plt.plot([0, 1], [0, 1], color="red", linestyle="--")
-                    plt.xlabel("True Accuracy")
-                    plt.ylabel("Estimated Accuracy")
+                    plt.xlabel("Estimated Accuracy")
+                    plt.ylabel("True Accuracy")
                     plt.title(f"Test Scatter - {dataset_label} (MAE={ds_test_mae:.5f}, MSE={ds_test_mse:.5f})")
                     plt.xlim(-0.05, 1.05)
                     plt.ylim(-0.05, 1.05)
@@ -1283,10 +1293,10 @@ def run_calibration_workflow(args):
                 # Test_real scatter plot
                 plt.figure(figsize=(6, 6))
                 if not ds_test_real_group.empty:
-                    plt.scatter(ds_test_real_group["accuracy"], ds_test_real_group["estimated_accuracy"], alpha=0.7, color="purple")
+                    plt.scatter(ds_test_real_group["estimated_accuracy"], ds_test_real_group["accuracy"], alpha=0.7, color="purple")
                 plt.plot([0, 1], [0, 1], color="red", linestyle="--")
-                plt.xlabel("True Accuracy")
-                plt.ylabel("Estimated Accuracy")
+                plt.xlabel("Estimated Accuracy")
+                plt.ylabel("True Accuracy")
                 plt.title(f"Test_real Scatter - {dataset_label} (MAE={ds_test_real_mae:.5f}, MSE={ds_test_real_mse:.5f})")
                 plt.xlim(-0.05, 1.05)
                 plt.ylim(-0.05, 1.05)
@@ -1298,10 +1308,10 @@ def run_calibration_workflow(args):
                 # Test_real_part scatter plot
                 plt.figure(figsize=(6, 6))
                 if not ds_test_real_part_utt.empty:
-                    plt.scatter(ds_test_real_part_utt["accuracy"], ds_test_real_part_utt["estimated_accuracy"], alpha=0.5, color="orange")
+                    plt.scatter(ds_test_real_part_utt["estimated_accuracy"], ds_test_real_part_utt["accuracy"], alpha=0.5, color="orange")
                 plt.plot([0, 1], [0, 1], color="red", linestyle="--")
-                plt.xlabel("True Accuracy")
-                plt.ylabel("Estimated Accuracy")
+                plt.xlabel("Estimated Accuracy")
+                plt.ylabel("True Accuracy")
                 plt.title(f"Test_real_part Scatter - {dataset_label} (MAE={ds_test_real_part_mae:.5f}, MSE={ds_test_real_part_mse:.5f})")
                 plt.xlim(-0.05, 1.05)
                 plt.ylim(-0.05, 1.05)
@@ -1313,10 +1323,10 @@ def run_calibration_workflow(args):
                 # Test_real_snr scatter plot
                 plt.figure(figsize=(6, 6))
                 if not ds_test_real_snr_group.empty:
-                    plt.scatter(ds_test_real_snr_group["accuracy"], ds_test_real_snr_group["estimated_accuracy"], alpha=0.7, color="teal")
+                    plt.scatter(ds_test_real_snr_group["estimated_accuracy"], ds_test_real_snr_group["accuracy"], alpha=0.7, color="teal")
                 plt.plot([0, 1], [0, 1], color="red", linestyle="--")
-                plt.xlabel("True Accuracy")
-                plt.ylabel("Estimated Accuracy")
+                plt.xlabel("Estimated Accuracy")
+                plt.ylabel("True Accuracy")
                 plt.title(f"Test_real_snr Scatter - {dataset_label} (MAE={ds_test_real_snr_mae:.5f}, MSE={ds_test_real_snr_mse:.5f})")
                 plt.xlim(-0.05, 1.05)
                 plt.ylim(-0.05, 1.05)
@@ -1328,10 +1338,10 @@ def run_calibration_workflow(args):
                 # Test_real_part_snr scatter plot
                 plt.figure(figsize=(6, 6))
                 if not ds_test_real_part_snr_utt.empty:
-                    plt.scatter(ds_test_real_part_snr_utt["accuracy"], ds_test_real_part_snr_utt["estimated_accuracy"], alpha=0.5, color="brown")
+                    plt.scatter(ds_test_real_part_snr_utt["estimated_accuracy"], ds_test_real_part_snr_utt["accuracy"], alpha=0.5, color="brown")
                 plt.plot([0, 1], [0, 1], color="red", linestyle="--")
-                plt.xlabel("True Accuracy")
-                plt.ylabel("Estimated Accuracy")
+                plt.xlabel("Estimated Accuracy")
+                plt.ylabel("True Accuracy")
                 plt.title(f"Test_real_part_snr Scatter - {dataset_label} (MAE={ds_test_real_part_snr_mae:.5f}, MSE={ds_test_real_part_snr_mse:.5f})")
                 plt.xlim(-0.05, 1.05)
                 plt.ylim(-0.05, 1.05)
@@ -1349,10 +1359,10 @@ def run_calibration_workflow(args):
                         
                         plt.figure(figsize=(6, 6))
                         if not ds_group_s.empty:
-                            plt.scatter(ds_group_s["accuracy"], ds_group_s["estimated_accuracy"], alpha=0.7, color="teal")
+                            plt.scatter(ds_group_s["estimated_accuracy"], ds_group_s["accuracy"], alpha=0.7, color="teal")
                         plt.plot([0, 1], [0, 1], color="red", linestyle="--")
-                        plt.xlabel("True Accuracy")
-                        plt.ylabel("Estimated Accuracy")
+                        plt.xlabel("Estimated Accuracy")
+                        plt.ylabel("True Accuracy")
                         plt.title(f"Test_real_snr_{snr_str} Scatter - {dataset_label} (MAE={info['group_mae']:.5f}, MSE={info['group_mse']:.5f})")
                         plt.xlim(-0.05, 1.05)
                         plt.ylim(-0.05, 1.05)
@@ -1363,10 +1373,10 @@ def run_calibration_workflow(args):
                         
                         plt.figure(figsize=(6, 6))
                         if not ds_utt_s.empty:
-                            plt.scatter(ds_utt_s["accuracy"], ds_utt_s["estimated_accuracy"], alpha=0.5, color="brown")
+                            plt.scatter(ds_utt_s["estimated_accuracy"], ds_utt_s["accuracy"], alpha=0.5, color="brown")
                         plt.plot([0, 1], [0, 1], color="red", linestyle="--")
-                        plt.xlabel("True Accuracy")
-                        plt.ylabel("Estimated Accuracy")
+                        plt.xlabel("Estimated Accuracy")
+                        plt.ylabel("True Accuracy")
                         plt.title(f"Test_real_part_snr_{snr_str} Scatter - {dataset_label} (MAE={info['utt_mae']:.5f}, MSE={info['utt_mse']:.5f})")
                         plt.xlim(-0.05, 1.05)
                         plt.ylim(-0.05, 1.05)

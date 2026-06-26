@@ -503,14 +503,14 @@ def run_calibration_workflow(args):
         df_segments.to_csv(output_dir / "segments.csv", index=False)
         logger.info("Saved segments.csv")
         
-        # 7. Generate ensemble samples (64k train, 16k test)
+        # 7. Generate ensemble samples
         logger.info("Generating ensemble samples...")
         train_samples, train_deciles_count = generate_ensemble_samples(
-            train_segments, 64000, seed=args.seed, n_jobs=args.jobs,
+            train_segments, args.target_ensemble, seed=args.seed, n_jobs=args.jobs,
             min_words=args.ensemble_min_words, max_words=args.ensemble_max_words, min_segments=args.ensemble_min_segments
         )
         test_samples, test_deciles_count = generate_ensemble_samples(
-            test_segments, 16000, seed=args.seed, n_jobs=args.jobs,
+            test_segments, args.target_ensemble // 4, seed=args.seed, n_jobs=args.jobs,
             min_words=args.ensemble_min_words, max_words=args.ensemble_max_words, min_segments=args.ensemble_min_segments
         )
         
@@ -918,6 +918,7 @@ def run_calibration_workflow(args):
             "uwebasr_url": args.uwebasr_url,
             "output_dir": args.output_dir,
             "target_segments": args.target_segments,
+            "target_ensemble": args.target_ensemble,
             "jobs": args.jobs,
             "seed": args.seed,
             "split_group": args.split_group,
@@ -1031,7 +1032,7 @@ def run_calibration_workflow(args):
                 else:
                     # Generate test ensemble samples for this dataset
                     ds_test_samples, _ = generate_ensemble_samples(
-                        ds_test_segments, 16000, seed=args.seed, n_jobs=args.jobs,
+                        ds_test_segments, args.target_ensemble // 4, seed=args.seed, n_jobs=args.jobs,
                         min_words=args.ensemble_min_words, max_words=args.ensemble_max_words, min_segments=args.ensemble_min_segments
                     )
                     
@@ -1397,6 +1398,7 @@ def main():
     parser.add_argument("--skip-bad-rows", action="store_true", help="Skip rows with missing audio, empty references, etc.")
     parser.add_argument("--limit", type=int, default=None, help="Limit number of utterances to process for debugging")
     parser.add_argument("--snr", action="append", type=float, default=[], help="SNR levels for training data augmentation with additive noise")
+    parser.add_argument("--target-ensemble", type=int, default=64000, help="Target number of ensemble samples for training/validation (test size will be 1/4 of this)")
     
     args = parser.parse_args()
     

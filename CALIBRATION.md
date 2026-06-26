@@ -51,7 +51,7 @@ uwebasr-calibrate \
   --seed 13
 ```
 
-All other parameters (such as `--target-segments`, `--jobs`, `--seed`, `--split-group`, `--loss`, `--skip-bad-rows`, etc.) act as global configuration values applied to all specified tasks.
+All other parameters (such as `--target-segments`, `--target-ensemble`, `--jobs`, `--seed`, `--split-group`, `--loss`, `--skip-bad-rows`, etc.) act as global configuration values applied to all specified tasks.
 
 The `--uwebasr-url` argument is the complete model endpoint URL. Users normally
 pass it without the `format` query parameter. The script requests:

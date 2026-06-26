@@ -24,7 +24,9 @@ FEATURE_ORDER = [
     "ctc_blank_neglog_error_p50",
     "ctc_blank_max_run_fraction",
     "ctc_token_count",
-    "ctc_prob_sum"
+    "ctc_prob_sum",
+    "ctc_word_count",
+    "ctc_word_prob_sum"
 ]
 
 def nearest_rank_percentile(sorted_values, q):
@@ -149,6 +151,46 @@ def extract_features(ctc_tokens, ctc_probs):
     b_short_run_frac = np.mean(np.array(blank_runs) <= 2) if blank_runs else 0.0
     nb_short_run_frac = np.mean(np.array(nonblank_runs) <= 2) if nonblank_runs else 0.0
     
+    # 5. CTC decoding to words and word probabilities
+    collapsed_tokens = []
+    collapsed_probs = []
+    if len(ctc_tokens) > 0:
+        curr_tok = ctc_tokens[0]
+        curr_prob = probs_clipped[0]
+        for tok, prob in zip(ctc_tokens[1:], probs_clipped[1:]):
+            if tok == curr_tok:
+                if prob > curr_prob:
+                    curr_prob = prob
+            else:
+                collapsed_tokens.append(curr_tok)
+                collapsed_probs.append(curr_prob)
+                curr_tok = tok
+                curr_prob = prob
+        collapsed_tokens.append(curr_tok)
+        collapsed_probs.append(curr_prob)
+
+    nonblank_tokens = []
+    nonblank_probs = []
+    for tok, prob in zip(collapsed_tokens, collapsed_probs):
+        if tok != "<blk>":
+            nonblank_tokens.append(tok)
+            nonblank_probs.append(prob)
+
+    words_probs = []
+    current_word_probs = []
+    for tok, prob in zip(nonblank_tokens, nonblank_probs):
+        if "▁" in tok:
+            if current_word_probs:
+                words_probs.append(current_word_probs)
+                current_word_probs = []
+        current_word_probs.append(prob)
+    if current_word_probs:
+        words_probs.append(current_word_probs)
+
+    word_probabilities = [float(np.mean(w_probs)) for w_probs in words_probs]
+    ctc_word_count = len(word_probabilities)
+    ctc_word_prob_sum = sum(word_probabilities)
+
     features = {
         "ctc_blank_mean_run_fraction": b_mean_run_frac,
         "ctc_nonblank_error_geom_mean": nb_error_geom_mean,
@@ -171,7 +213,9 @@ def extract_features(ctc_tokens, ctc_probs):
         "ctc_blank_neglog_error_p50": b_neglog_error_p50,
         "ctc_blank_max_run_fraction": b_max_run_frac,
         "ctc_token_count": float(n_frames),
-        "ctc_prob_sum": float(np.sum(ctc_probs))
+        "ctc_prob_sum": float(np.sum(ctc_probs)),
+        "ctc_word_count": float(ctc_word_count),
+        "ctc_word_prob_sum": float(ctc_word_prob_sum)
     }
     
     # Check for NaN or Inf

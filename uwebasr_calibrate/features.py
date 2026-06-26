@@ -179,7 +179,7 @@ def extract_features(ctc_tokens, ctc_probs):
     words_probs = []
     current_word_probs = []
     for tok, prob in zip(nonblank_tokens, nonblank_probs):
-        if "▁" in tok:
+        if any(c in tok for c in ["▁", "\u2581", " "]):
             if current_word_probs:
                 words_probs.append(current_word_probs)
                 current_word_probs = []

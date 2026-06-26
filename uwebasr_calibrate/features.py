@@ -27,8 +27,7 @@ FEATURE_ORDER = [
     "ctc_prob_sum",
     "ctc_word_count",
     "ctc_word_prob_sum",
-    "ctc_wpm",
-    "ctc_speech_to_silence_ratio"
+    "ctc_wpm"
 ]
 
 def nearest_rank_percentile(sorted_values, q):
@@ -206,7 +205,6 @@ def extract_features(ctc_tokens, ctc_probs, ctc_frame_len=0.04):
     ctc_wpm = ctc_word_count / max(eps, speech_duration_minutes)
 
     blank_count = len(ctc_tokens) - len(nonblank_indices)
-    ctc_speech_to_silence_ratio = len(nonblank_indices) / max(1, blank_count)
 
     features = {
         "ctc_blank_mean_run_fraction": b_mean_run_frac,
@@ -233,8 +231,7 @@ def extract_features(ctc_tokens, ctc_probs, ctc_frame_len=0.04):
         "ctc_prob_sum": float(np.sum(ctc_probs)),
         "ctc_word_count": float(ctc_word_count),
         "ctc_word_prob_sum": float(ctc_word_prob_sum),
-        "ctc_wpm": float(ctc_wpm),
-        "ctc_speech_to_silence_ratio": float(ctc_speech_to_silence_ratio)
+        "ctc_wpm": float(ctc_wpm)
     }
     
     # Check for NaN or Inf

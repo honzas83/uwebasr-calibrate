@@ -100,12 +100,72 @@ def validate_asr_result(result_list):
             
     return final_asr
 
-def run_recognition_single(session, url, audio_path, timeout_seconds=90, retries=7):
+def convert_audio_to_ogg_with_noise(audio_path, snr, utt_id):
+    """
+    Converts audio file to 16 kHz mono PCM, adds white Gaussian noise at target SNR,
+    and converts to 16 kHz mono Ogg/Vorbis using ffmpeg.
+    Returns the binary data.
+    """
+    import numpy as np
+    import hashlib
+    
+    # 1. Read audio as 16kHz mono 16-bit PCM
+    cmd_read = [
+        "ffmpeg", "-hide_banner", "-loglevel", "error",
+        "-i", str(audio_path),
+        "-f", "s16le", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", "-"
+    ]
+    try:
+        res = subprocess.run(cmd_read, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Ffmpeg read error for {audio_path}: {e.stderr.decode('utf-8')}")
+        raise e
+        
+    samples = np.frombuffer(res.stdout, dtype=np.int16).astype(np.float32)
+    
+    # 2. Add additive white noise
+    power_signal = np.mean(samples ** 2)
+    if power_signal <= 0:
+        power_signal = 1e-10
+        
+    power_noise = power_signal * (10.0 ** (-snr / 10.0))
+    
+    # Deterministic noise generation based on utt_id and snr
+    seed_str = f"{utt_id or ''}_{snr}"
+    seed_hash = hashlib.sha256(seed_str.encode("utf-8")).digest()
+    seed = int.from_bytes(seed_hash[:4], byteorder="big")
+    rng = np.random.default_rng(seed)
+    
+    noise = rng.normal(0, np.sqrt(power_noise), size=len(samples))
+    
+    # Add noise and clip to int16 range
+    augmented = samples + noise
+    augmented = np.clip(augmented, -32768.0, 32767.0).astype(np.int16)
+    
+    # 3. Convert PCM to Ogg/Vorbis
+    cmd_write = [
+        "ffmpeg", "-xerror", "-hide_banner", "-loglevel", "error",
+        "-f", "s16le", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
+        "-i", "-",
+        "-c:a", "libvorbis", "-q:a", "10",
+        "-f", "ogg", "-"
+    ]
+    try:
+        res_write = subprocess.run(cmd_write, input=augmented.tobytes(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        return res_write.stdout
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Ffmpeg write error converting noisy PCM to Ogg: {e.stderr.decode('utf-8')}")
+        raise e
+
+def run_recognition_single(session, url, audio_path, timeout_seconds=90, retries=7, snr=None, utt_id=None):
     """
     Sends the audio file to the UWebASR endpoint and returns the raw response list.
     Includes retries and backoff.
     """
-    ogg_bytes = convert_audio_to_ogg(audio_path)
+    if snr is not None:
+        ogg_bytes = convert_audio_to_ogg_with_noise(audio_path, snr, utt_id)
+    else:
+        ogg_bytes = convert_audio_to_ogg(audio_path)
     
     last_error = None
     for attempt in range(1, retries + 1):

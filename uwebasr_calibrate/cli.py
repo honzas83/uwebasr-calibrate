@@ -59,12 +59,15 @@ def process_utterance(row, url, cache_dir, timeout, retries):
     # Run recognition
     session = get_session()
     try:
+        snr = row.get("snr")
         raw_result = run_recognition_single(
             session=session,
             url=url,
             audio_path=row["audio_path"],
             timeout_seconds=timeout,
-            retries=retries
+            retries=retries,
+            snr=snr,
+            utt_id=row.get("original_utt_id") or utt_id
         )
         
         # Validate result
@@ -79,7 +82,10 @@ def process_utterance(row, url, cache_dir, timeout, retries):
             "result_format": "speechcloud_json",
             "result": raw_result
         }
-        
+        if snr is not None:
+            cache_data["snr"] = snr
+            cache_data["original_utt_id"] = row.get("original_utt_id")
+            
         cache_file.parent.mkdir(parents=True, exist_ok=True)
         with open(cache_file, "w", encoding="utf-8") as f:
             json.dump(cache_data, f, ensure_ascii=False, indent=2)
@@ -175,7 +181,15 @@ def evaluate_windowed_predictions(windows_by_key, predictor, split_name, split_w
                 "n_windows": n_windows
             })
             
-    return pd.DataFrame(window_records), pd.DataFrame(agg_records)
+def compute_overall_accuracy(rows, df_utt_metrics):
+    utt_ids = {r["utt_id"] for r in rows}
+    df_filtered = df_utt_metrics[df_utt_metrics["utt_id"].isin(utt_ids)]
+    if df_filtered.empty:
+        return 0.0, 0
+    total_ref = int(df_filtered["reference_words"].sum())
+    total_err = int(df_filtered["edit_errors"].sum())
+    acc = max(0.0, 1.0 - total_err / total_ref) if total_ref > 0 else 0.0
+    return acc, len(df_filtered)
 
 def run_calibration_workflow(args):
     output_dir = Path(args.output_dir)
@@ -234,6 +248,67 @@ def run_calibration_workflow(args):
             logger.info(f"Limiting execution to first {args.limit} utterances for debugging.")
             all_rows = all_rows[:args.limit]
             
+        # Filter rows to only those with valid normalized reference words (before running ASR/splitting)
+        filtered_rows = []
+        for r in all_rows:
+            ref_words = normalize_text(r["reference"])
+            if len(ref_words) == 0:
+                logger.warning(f"Utterance {r['utt_id']} has 0 normalized reference words. Skipping from calibration.")
+            else:
+                filtered_rows.append(r)
+        
+        # 5. Split rows by speaker/group
+        from uwebasr_calibrate.data import get_speaker_id, get_group_id
+        
+        try:
+            has_explicit_split = any("split" in r and r["split"] in ["train", "test"] for r in filtered_rows)
+            if has_explicit_split:
+                logger.info("Using pre-defined split from 'split' column in the manifest.")
+                train_rows = [r for r in filtered_rows if r.get("split") == "train"]
+                test_rows = [r for r in filtered_rows if r.get("split") == "test"]
+                
+                for r in train_rows:
+                    r["speaker_id"] = get_speaker_id(r["utt_id"], r.get("speaker_id"))
+                    r["group_id"] = get_group_id(r["utt_id"], r.get("group_id"))
+                for r in test_rows:
+                    r["speaker_id"] = get_speaker_id(r["utt_id"], r.get("speaker_id"))
+                    r["group_id"] = get_group_id(r["utt_id"], r.get("group_id"))
+                    
+                train_speakers = list(set(r["speaker_id"] for r in train_rows if r["speaker_id"] is not None))
+                test_speakers = list(set(r["speaker_id"] for r in test_rows if r["speaker_id"] is not None))
+                
+                logger.info(f"Split verified. Train: {len(train_rows)} utterances. Test: {len(test_rows)} utterances.")
+            else:
+                train_rows, test_rows, train_speakers, test_speakers = split_dataset(
+                    filtered_rows, train_fraction=0.8, seed=args.seed, split_group=args.split_group
+                )
+                logger.info(f"Split completed. Train: {len(train_rows)} utterances. Test: {len(test_rows)} utterances.")
+                if args.split_group == "speaker":
+                    logger.info(f"Train speakers: {len(train_speakers)}. Test speakers: {len(test_speakers)}")
+        except Exception as e:
+            logger.error(f"Dataset split failed: {e}")
+            raise e
+            
+        # Data Augmentation with Additive Noise
+        augmented_train_rows = []
+        if args.snr:
+            logger.info(f"Augmenting training data with SNR levels: {args.snr}")
+            for r in train_rows:
+                for snr_val in args.snr:
+                    aug_r = r.copy()
+                    snr_str = f"{int(snr_val)}" if snr_val == int(snr_val) else f"{snr_val}"
+                    aug_r["original_utt_id"] = r["utt_id"]
+                    aug_r["utt_id"] = f"{r['utt_id']}_snr{snr_str}"
+                    aug_r["snr"] = snr_val
+                    augmented_train_rows.append(aug_r)
+            logger.info(f"Generated {len(augmented_train_rows)} augmented training utterances.")
+            
+        all_to_process = train_rows + augmented_train_rows + test_rows
+        
+        # Build utt_to_url mapping for all items to process
+        for r in augmented_train_rows:
+            utt_to_url[r["utt_id"]] = utt_to_url[r["original_utt_id"]]
+            
         # 3. Recognition (Resumable)
         asr_results = {}
         failed_recognition = []
@@ -242,7 +317,7 @@ def run_calibration_workflow(args):
         with ThreadPoolExecutor(max_workers=args.jobs) as executor:
             futures = {
                 executor.submit(process_utterance, row, utt_to_url[row["utt_id"]], cache_dir, 90, 7): row
-                for row in all_rows
+                for row in all_to_process
             }
             total_utts = len(futures)
             completed_count = 0
@@ -266,7 +341,7 @@ def run_calibration_workflow(args):
         
         # 4. Compute normalized reference/hypothesis metrics & save utterance_metrics.csv
         utt_metrics = []
-        for row in all_rows:
+        for row in all_to_process:
             utt_id = row["utt_id"]
             asr_data = asr_results[utt_id]
             asr_result = validate_asr_result(asr_data["result"])
@@ -302,41 +377,33 @@ def run_calibration_workflow(args):
         df_utt_metrics.to_csv(output_dir / "utterance_metrics.csv", index=False)
         logger.info("Saved utterance_metrics.csv")
         
-        # Filter rows to only those with valid normalized reference words
+        # Ensure only successfully recognized rows are used
         valid_utt_ids = set(df_utt_metrics["utt_id"])
-        filtered_rows = [r for r in all_rows if r["utt_id"] in valid_utt_ids]
         
-        # 5. Split rows by speaker/group
-        from uwebasr_calibrate.data import get_speaker_id, get_group_id
+        train_rows_clean = [r for r in train_rows if r["utt_id"] in valid_utt_ids]
+        augmented_train_rows = [r for r in augmented_train_rows if r["utt_id"] in valid_utt_ids]
+        test_rows = [r for r in test_rows if r["utt_id"] in valid_utt_ids]
         
-        try:
-            has_explicit_split = any("split" in r and r["split"] in ["train", "test"] for r in filtered_rows)
-            if has_explicit_split:
-                logger.info("Using pre-defined split from 'split' column in the manifest.")
-                train_rows = [r for r in filtered_rows if r.get("split") == "train"]
-                test_rows = [r for r in filtered_rows if r.get("split") == "test"]
+        # Logging ASR Accuracy Summary
+        logger.info("--- ASR Accuracy Summary ---")
+        
+        # Clean data (union of train clean and test clean)
+        clean_rows = train_rows_clean + test_rows
+        acc_clean, n_utts_clean = compute_overall_accuracy(clean_rows, df_utt_metrics)
+        logger.info(f"Original (clean): Acc={acc_clean:.5f} ({n_utts_clean} utts)")
+        
+        # Augmented data for each SNR
+        if args.snr:
+            for snr_val in args.snr:
+                snr_train = [r for r in augmented_train_rows if r.get("snr") == snr_val]
+                acc_snr, n_utts_snr = compute_overall_accuracy(snr_train, df_utt_metrics)
+                logger.info(f"Augmented (SNR={snr_val}): Acc={acc_snr:.5f} ({n_utts_snr} utts)")
                 
-                for r in train_rows:
-                    r["speaker_id"] = get_speaker_id(r["utt_id"], r.get("speaker_id"))
-                    r["group_id"] = get_group_id(r["utt_id"], r.get("group_id"))
-                for r in test_rows:
-                    r["speaker_id"] = get_speaker_id(r["utt_id"], r.get("speaker_id"))
-                    r["group_id"] = get_group_id(r["utt_id"], r.get("group_id"))
-                    
-                train_speakers = list(set(r["speaker_id"] for r in train_rows if r["speaker_id"] is not None))
-                test_speakers = list(set(r["speaker_id"] for r in test_rows if r["speaker_id"] is not None))
-                
-                logger.info(f"Split verified. Train: {len(train_rows)} utterances. Test: {len(test_rows)} utterances.")
-            else:
-                train_rows, test_rows, train_speakers, test_speakers = split_dataset(
-                    filtered_rows, train_fraction=0.8, seed=args.seed, split_group=args.split_group
-                )
-                logger.info(f"Split completed. Train: {len(train_rows)} utterances. Test: {len(test_rows)} utterances.")
-                if args.split_group == "speaker":
-                    logger.info(f"Train speakers: {len(train_speakers)}. Test speakers: {len(test_speakers)}")
-        except Exception as e:
-            logger.error(f"Dataset split failed: {e}")
-            raise e
+        logger.info("----------------------------")
+        
+        # Combine train_rows and augmented_train_rows for training
+        train_rows = train_rows_clean + augmented_train_rows
+        filtered_rows = train_rows + test_rows
             
         # 6. Balanced Word-aligned Segmentation per dataset
         logger.info(f"Running balanced segmentation targeting {args.target_segments} segments per dataset/language...")
@@ -651,6 +718,7 @@ def run_calibration_workflow(args):
             "ensemble_max_words": args.ensemble_max_words,
             "ensemble_min_segments": args.ensemble_min_segments,
             "skip_bad_rows": args.skip_bad_rows,
+            "snr": args.snr,
             "train_speakers": train_speakers,
             "test_speakers": test_speakers,
             "normalizer_version": "default_calibration_normalizer",
@@ -888,6 +956,7 @@ def main():
     parser.add_argument("--ensemble-min-segments", type=int, default=2, help="Minimum number of segments per ensemble sample")
     parser.add_argument("--skip-bad-rows", action="store_true", help="Skip rows with missing audio, empty references, etc.")
     parser.add_argument("--limit", type=int, default=None, help="Limit number of utterances to process for debugging")
+    parser.add_argument("--snr", action="append", type=float, default=[], help="SNR levels for training data augmentation with additive noise")
     
     args = parser.parse_args()
     

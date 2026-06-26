@@ -649,6 +649,8 @@ ctc_blank_p000
 ctc_blank_short_run_fraction
 ctc_blank_neglog_error_p50
 ctc_blank_max_run_fraction
+ctc_token_count
+ctc_prob_sum
 ```
 
 The feature extractor should compute these features directly from the final
@@ -845,7 +847,9 @@ feature vector order is:
   ctc_blank_p000,
   ctc_blank_short_run_fraction,
   ctc_blank_neglog_error_p50,
-  ctc_blank_max_run_fraction
+  ctc_blank_max_run_fraction,
+  ctc_token_count,
+  ctc_prob_sum
 ]
 ```
 

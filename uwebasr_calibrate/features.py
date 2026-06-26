@@ -22,7 +22,9 @@ FEATURE_ORDER = [
     "ctc_blank_p000",
     "ctc_blank_short_run_fraction",
     "ctc_blank_neglog_error_p50",
-    "ctc_blank_max_run_fraction"
+    "ctc_blank_max_run_fraction",
+    "ctc_token_count",
+    "ctc_prob_sum"
 ]
 
 def nearest_rank_percentile(sorted_values, q):
@@ -167,7 +169,9 @@ def extract_features(ctc_tokens, ctc_probs):
         "ctc_blank_p000": b_p000,
         "ctc_blank_short_run_fraction": b_short_run_frac,
         "ctc_blank_neglog_error_p50": b_neglog_error_p50,
-        "ctc_blank_max_run_fraction": b_max_run_frac
+        "ctc_blank_max_run_fraction": b_max_run_frac,
+        "ctc_token_count": float(n_frames),
+        "ctc_prob_sum": float(np.sum(ctc_probs))
     }
     
     # Check for NaN or Inf

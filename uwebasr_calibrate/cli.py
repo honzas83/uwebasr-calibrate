@@ -1,4 +1,5 @@
 import os
+import math
 import sys
 import json
 import logging
@@ -458,7 +459,7 @@ def run_calibration_workflow(args):
                 logger.warning(f"Dataset {i+1} pre-segmentation produced 0 segments. Skipping.")
                 continue
                 
-            ds_variants = max(1, round(args.target_segments / ds_estimated_per_variant))
+            ds_variants = max(1, math.ceil(args.target_segments / ds_estimated_per_variant))
             dataset_variants[i] = ds_variants
             
             logger.info(

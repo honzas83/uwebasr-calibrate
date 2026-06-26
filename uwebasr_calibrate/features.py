@@ -27,7 +27,8 @@ FEATURE_ORDER = [
     "ctc_prob_sum",
     "ctc_word_count",
     "ctc_word_prob_sum",
-    "ctc_wpm"
+    "ctc_wpm",
+    "ctc_speech_to_silence_ratio"
 ]
 
 def nearest_rank_percentile(sorted_values, q):
@@ -192,8 +193,20 @@ def extract_features(ctc_tokens, ctc_probs, ctc_frame_len=0.04):
     ctc_word_count = len(word_probabilities)
     ctc_word_prob_sum = sum(word_probabilities)
 
-    duration_minutes = (n_frames * ctc_frame_len) / 60.0
-    ctc_wpm = ctc_word_count / max(eps, duration_minutes)
+    nonblank_indices = [idx for idx, tok in enumerate(ctc_tokens) if tok != "<blk>"]
+    if nonblank_indices:
+        first_nonblank_index = nonblank_indices[0]
+        last_nonblank_index = nonblank_indices[-1]
+        speech_duration_seconds = (last_nonblank_index - first_nonblank_index) * ctc_frame_len
+        speech_duration_seconds = max(ctc_frame_len, speech_duration_seconds)
+    else:
+        speech_duration_seconds = ctc_frame_len
+
+    speech_duration_minutes = speech_duration_seconds / 60.0
+    ctc_wpm = ctc_word_count / max(eps, speech_duration_minutes)
+
+    blank_count = len(ctc_tokens) - len(nonblank_indices)
+    ctc_speech_to_silence_ratio = len(nonblank_indices) / max(1, blank_count)
 
     features = {
         "ctc_blank_mean_run_fraction": b_mean_run_frac,
@@ -220,7 +233,8 @@ def extract_features(ctc_tokens, ctc_probs, ctc_frame_len=0.04):
         "ctc_prob_sum": float(np.sum(ctc_probs)),
         "ctc_word_count": float(ctc_word_count),
         "ctc_word_prob_sum": float(ctc_word_prob_sum),
-        "ctc_wpm": float(ctc_wpm)
+        "ctc_wpm": float(ctc_wpm),
+        "ctc_speech_to_silence_ratio": float(ctc_speech_to_silence_ratio)
     }
     
     # Check for NaN or Inf

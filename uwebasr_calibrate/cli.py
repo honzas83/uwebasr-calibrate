@@ -293,6 +293,7 @@ def run_calibration_workflow(args):
             
         # Data Augmentation with Additive Noise
         augmented_train_rows = []
+        augmented_test_rows = []
         if args.snr:
             logger.info(f"Augmenting training data with SNR levels: {args.snr}")
             for r in train_rows:
@@ -302,13 +303,32 @@ def run_calibration_workflow(args):
                     aug_r["original_utt_id"] = r["utt_id"]
                     aug_r["utt_id"] = f"{r['utt_id']}_snr{snr_str}"
                     aug_r["snr"] = snr_val
+                    if r.get("group_id"):
+                        aug_r["group_id"] = f"{r['group_id']}_snr{snr_str}"
+                    if r.get("speaker_id"):
+                        aug_r["speaker_id"] = f"{r['speaker_id']}_snr{snr_str}"
                     augmented_train_rows.append(aug_r)
             logger.info(f"Generated {len(augmented_train_rows)} augmented training utterances.")
             
-        all_to_process = train_rows + augmented_train_rows + test_rows
+            logger.info(f"Augmenting test data with SNR levels: {args.snr}")
+            for r in test_rows:
+                for snr_val in args.snr:
+                    aug_r = r.copy()
+                    snr_str = f"{int(snr_val)}" if snr_val == int(snr_val) else f"{snr_val}"
+                    aug_r["original_utt_id"] = r["utt_id"]
+                    aug_r["utt_id"] = f"{r['utt_id']}_snr{snr_str}"
+                    aug_r["snr"] = snr_val
+                    if r.get("group_id"):
+                        aug_r["group_id"] = f"{r['group_id']}_snr{snr_str}"
+                    if r.get("speaker_id"):
+                        aug_r["speaker_id"] = f"{r['speaker_id']}_snr{snr_str}"
+                    augmented_test_rows.append(aug_r)
+            logger.info(f"Generated {len(augmented_test_rows)} augmented test utterances.")
+            
+        all_to_process = train_rows + augmented_train_rows + test_rows + augmented_test_rows
         
         # Build utt_to_url mapping for all items to process
-        for r in augmented_train_rows:
+        for r in augmented_train_rows + augmented_test_rows:
             utt_to_url[r["utt_id"]] = utt_to_url[r["original_utt_id"]]
             
         # 3. Recognition (Resumable)
@@ -384,30 +404,35 @@ def run_calibration_workflow(args):
         
         train_rows_clean = [r for r in train_rows if r["utt_id"] in valid_utt_ids]
         augmented_train_rows = [r for r in augmented_train_rows if r["utt_id"] in valid_utt_ids]
-        test_rows = [r for r in test_rows if r["utt_id"] in valid_utt_ids]
+        test_rows_clean = [r for r in test_rows if r["utt_id"] in valid_utt_ids]
+        augmented_test_rows = [r for r in augmented_test_rows if r["utt_id"] in valid_utt_ids]
         
         # Logging ASR Accuracy Summary
         logger.info("--- ASR Accuracy Summary ---")
         
-        # Clean train data
-        acc_train_clean, n_utts_train_clean = compute_overall_accuracy(train_rows_clean, df_utt_metrics)
-        logger.info(f"Original (clean) - train: Acc={acc_train_clean:.5f} ({n_utts_train_clean} utts)")
+        # Clean train and test
+        acc_tr, n_utts_tr = compute_overall_accuracy(train_rows_clean, df_utt_metrics)
+        logger.info(f"Original (clean) - train: Acc={acc_tr:.5f} ({n_utts_tr} utts)")
         
-        # Clean test data
-        acc_test_clean, n_utts_test_clean = compute_overall_accuracy(test_rows, df_utt_metrics)
-        logger.info(f"Original (clean) - test: Acc={acc_test_clean:.5f} ({n_utts_test_clean} utts)")
+        acc_te, n_utts_te = compute_overall_accuracy(test_rows_clean, df_utt_metrics)
+        logger.info(f"Original (clean) - test: Acc={acc_te:.5f} ({n_utts_te} utts)")
         
-        # Augmented data for each SNR
+        # Augmented train and test for each SNR
         if args.snr:
             for snr_val in args.snr:
                 snr_train = [r for r in augmented_train_rows if r.get("snr") == snr_val]
-                acc_snr, n_utts_snr = compute_overall_accuracy(snr_train, df_utt_metrics)
-                logger.info(f"Augmented (SNR={snr_val}): Acc={acc_snr:.5f} ({n_utts_snr} utts)")
+                acc_snr_tr, n_utts_snr_tr = compute_overall_accuracy(snr_train, df_utt_metrics)
+                logger.info(f"Augmented (SNR={snr_val}) - train: Acc={acc_snr_tr:.5f} ({n_utts_snr_tr} utts)")
+                
+                snr_test = [r for r in augmented_test_rows if r.get("snr") == snr_val]
+                acc_snr_te, n_utts_snr_te = compute_overall_accuracy(snr_test, df_utt_metrics)
+                logger.info(f"Augmented (SNR={snr_val}) - test: Acc={acc_snr_te:.5f} ({n_utts_snr_te} utts)")
                 
         logger.info("----------------------------")
         
-        # Combine train_rows and augmented_train_rows for training
+        # Combine train_rows and test_rows for training/testing
         train_rows = train_rows_clean + augmented_train_rows
+        test_rows = test_rows_clean + augmented_test_rows
         filtered_rows = train_rows + test_rows
             
         # 6. Balanced Word-aligned Segmentation per dataset

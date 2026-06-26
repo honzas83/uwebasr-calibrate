@@ -661,6 +661,72 @@ def run_calibration_workflow(args):
             
         logger.info(f"Test_real_part_snr results: MAE={test_real_part_snr_mae:.5f}, MSE={test_real_part_snr_mse:.5f}, corr={test_real_part_snr_corr}")
         
+        # 11e. Evaluate test_real_snr_{S} and test_real_part_snr_{S} for each SNR
+        df_test_real_snr_val_group_dict = {}
+        df_test_real_snr_val_window_dict = {}
+        df_test_real_part_snr_val_utt_dict = {}
+        df_test_real_part_snr_val_window_dict = {}
+        
+        snr_evals = {}
+        if args.snr:
+            for snr_val in args.snr:
+                snr_str = f"{int(snr_val)}" if snr_val == int(snr_val) else f"{snr_val}"
+                logger.info(f"Running test_real_snr_{snr_str} windowed evaluation...")
+                test_rows_s = test_rows_clean + [r for r in augmented_test_rows if r.get("snr") == snr_val]
+                
+                # group level
+                windows_by_group_s = get_test_real_windows(test_rows_s, asr_results, window_size=test_real_window_size, group_key="group_id")
+                df_window_s, df_group_s = evaluate_windowed_predictions(
+                    windows_by_group_s, predictor, f"test_real_snr_{snr_str}", f"test_real_snr_{snr_str}_window"
+                )
+                df_window_s.to_csv(output_dir / f"predictions.test_real_snr_{snr_str}_window.csv", index=False)
+                df_group_s.to_csv(output_dir / f"predictions.test_real_snr_{snr_str}.csv", index=False)
+                
+                df_test_real_snr_val_group_dict[snr_val] = df_group_s
+                df_test_real_snr_val_window_dict[snr_val] = df_window_s
+                
+                if not df_group_s.empty:
+                    mae_s = float(np.mean(np.abs(df_group_s["accuracy"] - df_group_s["estimated_accuracy"])))
+                    mse_s = float(np.mean((df_group_s["accuracy"] - df_group_s["estimated_accuracy"]) ** 2))
+                    corr_s = safe_pearsonr(df_group_s["accuracy"], df_group_s["estimated_accuracy"])
+                else:
+                    mae_s = 0.0
+                    mse_s = 0.0
+                    corr_s = None
+                
+                # part level
+                logger.info(f"Running test_real_part_snr_{snr_str} windowed evaluation...")
+                windows_by_utt_s = get_test_real_windows(test_rows_s, asr_results, window_size=test_real_window_size, group_key="utt_id")
+                df_part_window_s, df_part_utt_s = evaluate_windowed_predictions(
+                    windows_by_utt_s, predictor, f"test_real_part_snr_{snr_str}", f"test_real_part_snr_{snr_str}_window"
+                )
+                df_part_window_s.to_csv(output_dir / f"predictions.test_real_part_snr_{snr_str}_window.csv", index=False)
+                df_part_utt_s.to_csv(output_dir / f"predictions.test_real_part_snr_{snr_str}.csv", index=False)
+                
+                df_test_real_part_snr_val_utt_dict[snr_val] = df_part_utt_s
+                df_test_real_part_snr_val_window_dict[snr_val] = df_part_window_s
+                
+                if not df_part_utt_s.empty:
+                    part_mae_s = float(np.mean(np.abs(df_part_utt_s["accuracy"] - df_part_utt_s["estimated_accuracy"])))
+                    part_mse_s = float(np.mean((df_part_utt_s["accuracy"] - df_part_utt_s["estimated_accuracy"]) ** 2))
+                    part_corr_s = safe_pearsonr(df_part_utt_s["accuracy"], df_part_utt_s["estimated_accuracy"])
+                else:
+                    part_mae_s = 0.0
+                    part_mse_s = 0.0
+                    part_corr_s = None
+                
+                snr_evals[snr_val] = {
+                    "snr_str": snr_str,
+                    "df_group": df_group_s,
+                    "df_utt": df_part_utt_s,
+                    "group_mae": mae_s,
+                    "group_mse": mse_s,
+                    "group_corr": corr_s,
+                    "utt_mae": part_mae_s,
+                    "utt_mse": part_mse_s,
+                    "utt_corr": part_corr_s
+                }
+
         # 12. Save features.csv (for inspection/reproducibility)
         # Build list of feature rows
         feat_rows = []
@@ -772,6 +838,41 @@ def run_calibration_workflow(args):
         plt.savefig(plots_dir / "scatter_test_real_part_snr.png")
         plt.close()
         
+        # Test_real_snr_{S} and Test_real_part_snr_{S} scatter plots
+        if args.snr:
+            for snr_val, info in snr_evals.items():
+                snr_str = info["snr_str"]
+                df_group_s = info["df_group"]
+                df_utt_s = info["df_utt"]
+                
+                plt.figure(figsize=(6, 6))
+                if not df_group_s.empty:
+                    plt.scatter(df_group_s["accuracy"], df_group_s["estimated_accuracy"], alpha=0.7, color="teal")
+                plt.plot([0, 1], [0, 1], color="red", linestyle="--")
+                plt.xlabel("True Accuracy")
+                plt.ylabel("Estimated Accuracy")
+                plt.title(f"Test_real_snr_{snr_str} Scatter (MSE={info['group_mse']:.5f})" if df_group_s.empty else f"Test_real_snr_{snr_str} Group Scatter (MAE={info['group_mae']:.5f}, MSE={info['group_mse']:.5f})")
+                plt.xlim(-0.05, 1.05)
+                plt.ylim(-0.05, 1.05)
+                plt.grid(True)
+                plt.tight_layout()
+                plt.savefig(plots_dir / f"scatter_test_real_snr_{snr_str}.png")
+                plt.close()
+                
+                plt.figure(figsize=(6, 6))
+                if not df_utt_s.empty:
+                    plt.scatter(df_utt_s["accuracy"], df_utt_s["estimated_accuracy"], alpha=0.5, color="brown")
+                plt.plot([0, 1], [0, 1], color="red", linestyle="--")
+                plt.xlabel("True Accuracy")
+                plt.ylabel("Estimated Accuracy")
+                plt.title(f"Test_real_part_snr_{snr_str} Scatter (MSE={info['utt_mse']:.5f})" if df_utt_s.empty else f"Test_real_part_snr_{snr_str} Scatter (MAE={info['utt_mae']:.5f}, MSE={info['utt_mse']:.5f})")
+                plt.xlim(-0.05, 1.05)
+                plt.ylim(-0.05, 1.05)
+                plt.grid(True)
+                plt.tight_layout()
+                plt.savefig(plots_dir / f"scatter_test_real_part_snr_{snr_str}.png")
+                plt.close()
+        
         logger.info("Saved scatter plots.")
         
         # 14. Save metadata.json
@@ -877,6 +978,21 @@ def run_calibration_workflow(args):
                 "n_points": len(df_test_real_part_snr_utt)
             }
         }
+        if args.snr:
+            for snr_val, info in snr_evals.items():
+                snr_str = info["snr_str"]
+                metrics[f"test_real_snr_{snr_str}"] = {
+                    "MAE": info["group_mae"],
+                    "MSE": info["group_mse"],
+                    "pearson_correlation": info["group_corr"],
+                    "n_points": len(info["df_group"])
+                }
+                metrics[f"test_real_part_snr_{snr_str}"] = {
+                    "MAE": info["utt_mae"],
+                    "MSE": info["utt_mse"],
+                    "pearson_correlation": info["utt_corr"],
+                    "n_points": len(info["df_utt"])
+                }
         with open(output_dir / "metrics.json", "w", encoding="utf-8") as f:
             json.dump(metrics, f, indent=2, ensure_ascii=False)
             
@@ -1031,6 +1147,66 @@ def run_calibration_workflow(args):
                     ds_test_real_part_snr_mae = 0.0
                     ds_test_real_part_snr_mse = 0.0
                     ds_test_real_part_snr_corr = None
+
+                # Dataset-specific SNR-specific predictions and metrics
+                ds_snr_evals = {}
+                if args.snr:
+                    for snr_val in args.snr:
+                        snr_str = f"{int(snr_val)}" if snr_val == int(snr_val) else f"{snr_val}"
+                        
+                        # Predictions for this dataset & SNR value
+                        ds_test_real_snr_val_group = df_test_real_snr_val_group_dict[snr_val][
+                            df_test_real_snr_val_group_dict[snr_val]["sample_id"].apply(lambda x: group_to_dataset.get(get_original_group(x))) == i
+                        ]
+                        ds_test_real_snr_val_window = df_test_real_snr_val_window_dict[snr_val][
+                            df_test_real_snr_val_window_dict[snr_val]["sample_id"].apply(lambda x: group_to_dataset.get(get_original_group(x))) == i
+                        ]
+                        
+                        ds_test_real_snr_val_group.to_csv(ds_output_dir / f"predictions.test_real_snr_{snr_str}.csv", index=False)
+                        ds_test_real_snr_val_window.to_csv(ds_output_dir / f"predictions.test_real_snr_{snr_str}_window.csv", index=False)
+                        
+                        if not ds_test_real_snr_val_group.empty:
+                            ds_mae_s = float(np.mean(np.abs(ds_test_real_snr_val_group["accuracy"] - ds_test_real_snr_val_group["estimated_accuracy"])))
+                            ds_mse_s = float(np.mean((ds_test_real_snr_val_group["accuracy"] - ds_test_real_snr_val_group["estimated_accuracy"]) ** 2))
+                            ds_corr_s = safe_pearsonr(ds_test_real_snr_val_group["accuracy"], ds_test_real_snr_val_group["estimated_accuracy"])
+                        else:
+                            ds_mae_s = 0.0
+                            ds_mse_s = 0.0
+                            ds_corr_s = None
+                        
+                        # Part predictions for this dataset & SNR value
+                        ds_test_real_part_snr_val_utt = df_test_real_part_snr_val_utt_dict[snr_val][
+                            df_test_real_part_snr_val_utt_dict[snr_val]["sample_id"].apply(lambda x: utt_to_dataset.get(get_original_utt(x))) == i
+                        ]
+                        ds_test_real_part_snr_val_window = df_test_real_part_snr_val_window_dict[snr_val][
+                            df_test_real_part_snr_val_window_dict[snr_val]["sample_id"].apply(lambda x: utt_to_dataset.get(get_original_utt(x))) == i
+                        ]
+                        
+                        ds_test_real_part_snr_val_utt.to_csv(ds_output_dir / f"predictions.test_real_part_snr_{snr_str}.csv", index=False)
+                        ds_test_real_part_snr_val_window.to_csv(ds_output_dir / f"predictions.test_real_part_snr_{snr_str}_window.csv", index=False)
+                        
+                        if not ds_test_real_part_snr_val_utt.empty:
+                            ds_part_mae_s = float(np.mean(np.abs(ds_test_real_part_snr_val_utt["accuracy"] - ds_test_real_part_snr_val_utt["estimated_accuracy"])))
+                            ds_part_mse_s = float(np.mean((ds_test_real_part_snr_val_utt["accuracy"] - ds_test_real_part_snr_val_utt["estimated_accuracy"]) ** 2))
+                            ds_part_corr_s = safe_pearsonr(ds_test_real_part_snr_val_utt["accuracy"], ds_test_real_part_snr_val_utt["estimated_accuracy"])
+                        else:
+                            ds_part_mae_s = 0.0
+                            ds_part_mse_s = 0.0
+                            ds_part_corr_s = None
+                            
+                        ds_snr_evals[snr_val] = {
+                            "snr_str": snr_str,
+                            "group_mae": ds_mae_s,
+                            "group_mse": ds_mse_s,
+                            "group_corr": ds_corr_s,
+                            "utt_mae": ds_part_mae_s,
+                            "utt_mse": ds_part_mse_s,
+                            "utt_corr": ds_part_corr_s,
+                            "group_len": len(ds_test_real_snr_val_group),
+                            "utt_len": len(ds_test_real_part_snr_val_utt),
+                            "df_group": ds_test_real_snr_val_group,
+                            "df_utt": ds_test_real_part_snr_val_utt
+                        }
                 
                 # Save metrics.json for this dataset
                 ds_metrics = {
@@ -1065,6 +1241,21 @@ def run_calibration_workflow(args):
                         "n_points": len(ds_test_real_part_snr_utt)
                     }
                 }
+                if args.snr:
+                    for snr_val, info in ds_snr_evals.items():
+                        snr_str = info["snr_str"]
+                        ds_metrics[f"test_real_snr_{snr_str}"] = {
+                            "MAE": info["group_mae"],
+                            "MSE": info["group_mse"],
+                            "pearson_correlation": info["group_corr"],
+                            "n_points": info["group_len"]
+                        }
+                        ds_metrics[f"test_real_part_snr_{snr_str}"] = {
+                            "MAE": info["utt_mae"],
+                            "MSE": info["utt_mse"],
+                            "pearson_correlation": info["utt_corr"],
+                            "n_points": info["utt_len"]
+                        }
                 with open(ds_output_dir / "metrics.json", "w", encoding="utf-8") as f:
                     json.dump(ds_metrics, f, indent=2, ensure_ascii=False)
                 
@@ -1146,6 +1337,41 @@ def run_calibration_workflow(args):
                 plt.tight_layout()
                 plt.savefig(ds_plots_dir / "scatter_test_real_part_snr.png")
                 plt.close()
+                
+                # Test_real_snr_{S} and Test_real_part_snr_{S} scatter plots
+                if args.snr:
+                    for snr_val, info in ds_snr_evals.items():
+                        snr_str = info["snr_str"]
+                        ds_group_s = info["df_group"]
+                        ds_utt_s = info["df_utt"]
+                        
+                        plt.figure(figsize=(6, 6))
+                        if not ds_group_s.empty:
+                            plt.scatter(ds_group_s["accuracy"], ds_group_s["estimated_accuracy"], alpha=0.7, color="teal")
+                        plt.plot([0, 1], [0, 1], color="red", linestyle="--")
+                        plt.xlabel("True Accuracy")
+                        plt.ylabel("Estimated Accuracy")
+                        plt.title(f"Test_real_snr_{snr_str} Scatter - {dataset_label} (MAE={info['group_mae']:.5f}, MSE={info['group_mse']:.5f})")
+                        plt.xlim(-0.05, 1.05)
+                        plt.ylim(-0.05, 1.05)
+                        plt.grid(True)
+                        plt.tight_layout()
+                        plt.savefig(ds_plots_dir / f"scatter_test_real_snr_{snr_str}.png")
+                        plt.close()
+                        
+                        plt.figure(figsize=(6, 6))
+                        if not ds_utt_s.empty:
+                            plt.scatter(ds_utt_s["accuracy"], ds_utt_s["estimated_accuracy"], alpha=0.5, color="brown")
+                        plt.plot([0, 1], [0, 1], color="red", linestyle="--")
+                        plt.xlabel("True Accuracy")
+                        plt.ylabel("Estimated Accuracy")
+                        plt.title(f"Test_real_part_snr_{snr_str} Scatter - {dataset_label} (MAE={info['utt_mae']:.5f}, MSE={info['utt_mse']:.5f})")
+                        plt.xlim(-0.05, 1.05)
+                        plt.ylim(-0.05, 1.05)
+                        plt.grid(True)
+                        plt.tight_layout()
+                        plt.savefig(ds_plots_dir / f"scatter_test_real_part_snr_{snr_str}.png")
+                        plt.close()
                 
                 logger.info(f"Saved dataset-specific report for {dataset_label} to {ds_output_dir}")
                 

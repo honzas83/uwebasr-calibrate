@@ -568,10 +568,10 @@ def run_calibration_workflow(args):
         df_test_preds = pd.DataFrame(test_records)
         df_test_preds.to_csv(output_dir / "predictions.test.csv", index=False)
         
-        # 11. Evaluate test_real (Windowed prediction grouped by group_id)
-        logger.info("Running test_real windowed evaluation (grouped by group_id)...")
+        # 11. Evaluate test_real (Windowed prediction grouped by group_id, clean only)
+        logger.info("Running test_real windowed evaluation (grouped by group_id, clean only)...")
         test_real_window_size = (args.ensemble_min_words + args.ensemble_max_words) // 2
-        windows_by_group = get_test_real_windows(test_rows, asr_results, window_size=test_real_window_size, group_key="group_id")
+        windows_by_group = get_test_real_windows(test_rows_clean, asr_results, window_size=test_real_window_size, group_key="group_id")
         
         df_test_real_window, df_test_real_group = evaluate_windowed_predictions(
             windows_by_group, predictor, "test_real", "test_real_window"
@@ -592,9 +592,9 @@ def run_calibration_workflow(args):
             
         logger.info(f"Test_real results: MAE={test_real_mae:.5f}, MSE={test_real_mse:.5f}, corr={test_real_corr}")
         
-        # 11b. Evaluate test_real_part (Windowed prediction on individual utterances, ungrouped)
-        logger.info("Running test_real_part windowed evaluation (ungrouped)...")
-        windows_by_utt = get_test_real_windows(test_rows, asr_results, window_size=test_real_window_size, group_key="utt_id")
+        # 11b. Evaluate test_real_part (Windowed prediction on individual utterances, ungrouped, clean only)
+        logger.info("Running test_real_part windowed evaluation (ungrouped, clean only)...")
+        windows_by_utt = get_test_real_windows(test_rows_clean, asr_results, window_size=test_real_window_size, group_key="utt_id")
         
         df_test_real_part_window, df_test_real_part_utt = evaluate_windowed_predictions(
             windows_by_utt, predictor, "test_real_part", "test_real_part_window"
@@ -614,6 +614,52 @@ def run_calibration_workflow(args):
             test_real_part_corr = None
             
         logger.info(f"Test_real_part results: MAE={test_real_part_mae:.5f}, MSE={test_real_part_mse:.5f}, corr={test_real_part_corr}")
+
+        # 11c. Evaluate test_real_snr (Windowed prediction grouped by group_id, including SNR)
+        logger.info("Running test_real_snr windowed evaluation (grouped by group_id, including SNR)...")
+        windows_by_group_snr = get_test_real_windows(test_rows, asr_results, window_size=test_real_window_size, group_key="group_id")
+        
+        df_test_real_snr_window, df_test_real_snr_group = evaluate_windowed_predictions(
+            windows_by_group_snr, predictor, "test_real_snr", "test_real_snr_window"
+        )
+        
+        df_test_real_snr_window.to_csv(output_dir / "predictions.test_real_snr_window.csv", index=False)
+        df_test_real_snr_group.to_csv(output_dir / "predictions.test_real_snr.csv", index=False)
+        
+        # Compute test_real_snr metrics
+        if not df_test_real_snr_group.empty:
+            test_real_snr_mae = float(np.mean(np.abs(df_test_real_snr_group["accuracy"] - df_test_real_snr_group["estimated_accuracy"])))
+            test_real_snr_mse = float(np.mean((df_test_real_snr_group["accuracy"] - df_test_real_snr_group["estimated_accuracy"]) ** 2))
+            test_real_snr_corr = safe_pearsonr(df_test_real_snr_group["accuracy"], df_test_real_snr_group["estimated_accuracy"])
+        else:
+            test_real_snr_mae = 0.0
+            test_real_snr_mse = 0.0
+            test_real_snr_corr = None
+            
+        logger.info(f"Test_real_snr results: MAE={test_real_snr_mae:.5f}, MSE={test_real_snr_mse:.5f}, corr={test_real_snr_corr}")
+        
+        # 11d. Evaluate test_real_part_snr (Windowed prediction on individual utterances, ungrouped, including SNR)
+        logger.info("Running test_real_part_snr windowed evaluation (ungrouped, including SNR)...")
+        windows_by_utt_snr = get_test_real_windows(test_rows, asr_results, window_size=test_real_window_size, group_key="utt_id")
+        
+        df_test_real_part_snr_window, df_test_real_part_snr_utt = evaluate_windowed_predictions(
+            windows_by_utt_snr, predictor, "test_real_part_snr", "test_real_part_snr_window"
+        )
+        
+        df_test_real_part_snr_window.to_csv(output_dir / "predictions.test_real_part_snr_window.csv", index=False)
+        df_test_real_part_snr_utt.to_csv(output_dir / "predictions.test_real_part_snr.csv", index=False)
+        
+        # Compute test_real_part_snr metrics
+        if not df_test_real_part_snr_utt.empty:
+            test_real_part_snr_mae = float(np.mean(np.abs(df_test_real_part_snr_utt["accuracy"] - df_test_real_part_snr_utt["estimated_accuracy"])))
+            test_real_part_snr_mse = float(np.mean((df_test_real_part_snr_utt["accuracy"] - df_test_real_part_snr_utt["estimated_accuracy"]) ** 2))
+            test_real_part_snr_corr = safe_pearsonr(df_test_real_part_snr_utt["accuracy"], df_test_real_part_snr_utt["estimated_accuracy"])
+        else:
+            test_real_part_snr_mae = 0.0
+            test_real_part_snr_mse = 0.0
+            test_real_part_snr_corr = None
+            
+        logger.info(f"Test_real_part_snr results: MAE={test_real_part_snr_mae:.5f}, MSE={test_real_part_snr_mse:.5f}, corr={test_real_part_snr_corr}")
         
         # 12. Save features.csv (for inspection/reproducibility)
         # Build list of feature rows
@@ -694,6 +740,36 @@ def run_calibration_workflow(args):
         plt.grid(True)
         plt.tight_layout()
         plt.savefig(plots_dir / "scatter_test_real_part.png")
+        plt.close()
+        
+        # Test_real_snr scatter plot
+        plt.figure(figsize=(6, 6))
+        if not df_test_real_snr_group.empty:
+            plt.scatter(df_test_real_snr_group["accuracy"], df_test_real_snr_group["estimated_accuracy"], alpha=0.7, color="teal")
+        plt.plot([0, 1], [0, 1], color="red", linestyle="--")
+        plt.xlabel("True Accuracy")
+        plt.ylabel("Estimated Accuracy")
+        plt.title(f"Test_real_snr Scatter (MSE={test_real_snr_mse:.5f})" if df_test_real_snr_group.empty else f"Test_real_snr Group Scatter (MAE={test_real_snr_mae:.5f}, MSE={test_real_snr_mse:.5f})")
+        plt.xlim(-0.05, 1.05)
+        plt.ylim(-0.05, 1.05)
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig(plots_dir / "scatter_test_real_snr.png")
+        plt.close()
+        
+        # Test_real_part_snr scatter plot
+        plt.figure(figsize=(6, 6))
+        if not df_test_real_part_snr_utt.empty:
+            plt.scatter(df_test_real_part_snr_utt["accuracy"], df_test_real_part_snr_utt["estimated_accuracy"], alpha=0.5, color="brown")
+        plt.plot([0, 1], [0, 1], color="red", linestyle="--")
+        plt.xlabel("True Accuracy")
+        plt.ylabel("Estimated Accuracy")
+        plt.title(f"Test_real_part_snr Scatter (MSE={test_real_part_snr_mse:.5f})" if df_test_real_part_snr_utt.empty else f"Test_real_part_snr Scatter (MAE={test_real_part_snr_mae:.5f}, MSE={test_real_part_snr_mse:.5f})")
+        plt.xlim(-0.05, 1.05)
+        plt.ylim(-0.05, 1.05)
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig(plots_dir / "scatter_test_real_part_snr.png")
         plt.close()
         
         logger.info("Saved scatter plots.")
@@ -787,6 +863,18 @@ def run_calibration_workflow(args):
                 "MSE": test_real_part_mse,
                 "pearson_correlation": test_real_part_corr,
                 "n_points": len(df_test_real_part_utt)
+            },
+            "test_real_snr": {
+                "MAE": test_real_snr_mae,
+                "MSE": test_real_snr_mse,
+                "pearson_correlation": test_real_snr_corr,
+                "n_points": len(df_test_real_snr_group)
+            },
+            "test_real_part_snr": {
+                "MAE": test_real_part_snr_mae,
+                "MSE": test_real_part_snr_mse,
+                "pearson_correlation": test_real_part_snr_corr,
+                "n_points": len(df_test_real_part_snr_utt)
             }
         }
         with open(output_dir / "metrics.json", "w", encoding="utf-8") as f:
@@ -851,12 +939,25 @@ def run_calibration_workflow(args):
                     ds_test_preds = pd.DataFrame(ds_test_records)
                     ds_test_preds.to_csv(ds_output_dir / "predictions.test.csv", index=False)
                 
-                # Filter test_real predictions for this dataset
+                # Define helper functions locally for filtering
+                def get_original_group(x):
+                    base = x.rsplit('_w', 1)[0]
+                    if '_snr' in base:
+                        base = base.rsplit('_snr', 1)[0]
+                    return base
+                    
+                def get_original_utt(x):
+                    base = x.rsplit('_w', 1)[0]
+                    if '_snr' in base:
+                        base = base.rsplit('_snr', 1)[0]
+                    return base
+
+                # Filter test_real predictions for this dataset (clean only)
                 ds_test_real_group = df_test_real_group[
-                    df_test_real_group["sample_id"].map(group_to_dataset) == i
+                    df_test_real_group["sample_id"].apply(lambda x: group_to_dataset.get(get_original_group(x))) == i
                 ]
                 ds_test_real_window = df_test_real_window[
-                    df_test_real_window["sample_id"].apply(lambda x: group_to_dataset.get(x.rsplit('_w', 1)[0])) == i
+                    df_test_real_window["sample_id"].apply(lambda x: group_to_dataset.get(get_original_group(x))) == i
                 ]
                 
                 ds_test_real_group.to_csv(ds_output_dir / "predictions.test_real.csv", index=False)
@@ -871,12 +972,12 @@ def run_calibration_workflow(args):
                     ds_test_real_mse = 0.0
                     ds_test_real_corr = None
                     
-                # Filter test_real_part predictions for this dataset
+                # Filter test_real_part predictions for this dataset (clean only)
                 ds_test_real_part_utt = df_test_real_part_utt[
-                    df_test_real_part_utt["sample_id"].map(utt_to_dataset) == i
+                    df_test_real_part_utt["sample_id"].apply(lambda x: utt_to_dataset.get(get_original_utt(x))) == i
                 ]
                 ds_test_real_part_window = df_test_real_part_window[
-                    df_test_real_part_window["sample_id"].apply(lambda x: utt_to_dataset.get(x.rsplit('_w', 1)[0])) == i
+                    df_test_real_part_window["sample_id"].apply(lambda x: utt_to_dataset.get(get_original_utt(x))) == i
                 ]
                 
                 ds_test_real_part_utt.to_csv(ds_output_dir / "predictions.test_real_part.csv", index=False)
@@ -890,6 +991,46 @@ def run_calibration_workflow(args):
                     ds_test_real_part_mae = 0.0
                     ds_test_real_part_mse = 0.0
                     ds_test_real_part_corr = None
+
+                # Filter test_real_snr predictions for this dataset (including SNR)
+                ds_test_real_snr_group = df_test_real_snr_group[
+                    df_test_real_snr_group["sample_id"].apply(lambda x: group_to_dataset.get(get_original_group(x))) == i
+                ]
+                ds_test_real_snr_window = df_test_real_snr_window[
+                    df_test_real_snr_window["sample_id"].apply(lambda x: group_to_dataset.get(get_original_group(x))) == i
+                ]
+                
+                ds_test_real_snr_group.to_csv(ds_output_dir / "predictions.test_real_snr.csv", index=False)
+                ds_test_real_snr_window.to_csv(ds_output_dir / "predictions.test_real_snr_window.csv", index=False)
+                
+                if not ds_test_real_snr_group.empty:
+                    ds_test_real_snr_mae = float(np.mean(np.abs(ds_test_real_snr_group["accuracy"] - ds_test_real_snr_group["estimated_accuracy"])))
+                    ds_test_real_snr_mse = float(np.mean((ds_test_real_snr_group["accuracy"] - ds_test_real_snr_group["estimated_accuracy"]) ** 2))
+                    ds_test_real_snr_corr = safe_pearsonr(ds_test_real_snr_group["accuracy"], ds_test_real_snr_group["estimated_accuracy"])
+                else:
+                    ds_test_real_snr_mae = 0.0
+                    ds_test_real_snr_mse = 0.0
+                    ds_test_real_snr_corr = None
+                    
+                # Filter test_real_part_snr predictions for this dataset (including SNR)
+                ds_test_real_part_snr_utt = df_test_real_part_snr_utt[
+                    df_test_real_part_snr_utt["sample_id"].apply(lambda x: utt_to_dataset.get(get_original_utt(x))) == i
+                ]
+                ds_test_real_part_snr_window = df_test_real_part_snr_window[
+                    df_test_real_part_snr_window["sample_id"].apply(lambda x: utt_to_dataset.get(get_original_utt(x))) == i
+                ]
+                
+                ds_test_real_part_snr_utt.to_csv(ds_output_dir / "predictions.test_real_part_snr.csv", index=False)
+                ds_test_real_part_snr_window.to_csv(ds_output_dir / "predictions.test_real_part_snr_window.csv", index=False)
+                
+                if not ds_test_real_part_snr_utt.empty:
+                    ds_test_real_part_snr_mae = float(np.mean(np.abs(ds_test_real_part_snr_utt["accuracy"] - ds_test_real_part_snr_utt["estimated_accuracy"])))
+                    ds_test_real_part_snr_mse = float(np.mean((ds_test_real_part_snr_utt["accuracy"] - ds_test_real_part_snr_utt["estimated_accuracy"]) ** 2))
+                    ds_test_real_part_snr_corr = safe_pearsonr(ds_test_real_part_snr_utt["accuracy"], ds_test_real_part_snr_utt["estimated_accuracy"])
+                else:
+                    ds_test_real_part_snr_mae = 0.0
+                    ds_test_real_part_snr_mse = 0.0
+                    ds_test_real_part_snr_corr = None
                 
                 # Save metrics.json for this dataset
                 ds_metrics = {
@@ -910,6 +1051,18 @@ def run_calibration_workflow(args):
                         "MSE": ds_test_real_part_mse,
                         "pearson_correlation": ds_test_real_part_corr,
                         "n_points": len(ds_test_real_part_utt)
+                    },
+                    "test_real_snr": {
+                        "MAE": ds_test_real_snr_mae,
+                        "MSE": ds_test_real_snr_mse,
+                        "pearson_correlation": ds_test_real_snr_corr,
+                        "n_points": len(ds_test_real_snr_group)
+                    },
+                    "test_real_part_snr": {
+                        "MAE": ds_test_real_part_snr_mae,
+                        "MSE": ds_test_real_part_snr_mse,
+                        "pearson_correlation": ds_test_real_part_snr_corr,
+                        "n_points": len(ds_test_real_part_snr_utt)
                     }
                 }
                 with open(ds_output_dir / "metrics.json", "w", encoding="utf-8") as f:
@@ -962,6 +1115,36 @@ def run_calibration_workflow(args):
                 plt.grid(True)
                 plt.tight_layout()
                 plt.savefig(ds_plots_dir / "scatter_test_real_part.png")
+                plt.close()
+
+                # Test_real_snr scatter plot
+                plt.figure(figsize=(6, 6))
+                if not ds_test_real_snr_group.empty:
+                    plt.scatter(ds_test_real_snr_group["accuracy"], ds_test_real_snr_group["estimated_accuracy"], alpha=0.7, color="teal")
+                plt.plot([0, 1], [0, 1], color="red", linestyle="--")
+                plt.xlabel("True Accuracy")
+                plt.ylabel("Estimated Accuracy")
+                plt.title(f"Test_real_snr Scatter - {dataset_label} (MAE={ds_test_real_snr_mae:.5f}, MSE={ds_test_real_snr_mse:.5f})")
+                plt.xlim(-0.05, 1.05)
+                plt.ylim(-0.05, 1.05)
+                plt.grid(True)
+                plt.tight_layout()
+                plt.savefig(ds_plots_dir / "scatter_test_real_snr.png")
+                plt.close()
+                
+                # Test_real_part_snr scatter plot
+                plt.figure(figsize=(6, 6))
+                if not ds_test_real_part_snr_utt.empty:
+                    plt.scatter(ds_test_real_part_snr_utt["accuracy"], ds_test_real_part_snr_utt["estimated_accuracy"], alpha=0.5, color="brown")
+                plt.plot([0, 1], [0, 1], color="red", linestyle="--")
+                plt.xlabel("True Accuracy")
+                plt.ylabel("Estimated Accuracy")
+                plt.title(f"Test_real_part_snr Scatter - {dataset_label} (MAE={ds_test_real_part_snr_mae:.5f}, MSE={ds_test_real_part_snr_mse:.5f})")
+                plt.xlim(-0.05, 1.05)
+                plt.ylim(-0.05, 1.05)
+                plt.grid(True)
+                plt.tight_layout()
+                plt.savefig(ds_plots_dir / "scatter_test_real_part_snr.png")
                 plt.close()
                 
                 logger.info(f"Saved dataset-specific report for {dataset_label} to {ds_output_dir}")

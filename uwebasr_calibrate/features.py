@@ -26,7 +26,8 @@ FEATURE_ORDER = [
     "ctc_token_count",
     "ctc_prob_sum",
     "ctc_word_count",
-    "ctc_word_prob_sum"
+    "ctc_word_prob_sum",
+    "ctc_wpm"
 ]
 
 def nearest_rank_percentile(sorted_values, q):
@@ -73,7 +74,7 @@ def compute_run_lengths(mask):
         
     return blank_runs, nonblank_runs
 
-def extract_features(ctc_tokens, ctc_probs):
+def extract_features(ctc_tokens, ctc_probs, ctc_frame_len=0.04):
     """
     Extracts the top 20 CTC confidence features from the ctc_tokens and ctc_probs streams.
     Raises ValueError if inputs are invalid or empty, or if NaN/Inf features are produced.
@@ -191,6 +192,9 @@ def extract_features(ctc_tokens, ctc_probs):
     ctc_word_count = len(word_probabilities)
     ctc_word_prob_sum = sum(word_probabilities)
 
+    duration_minutes = (n_frames * ctc_frame_len) / 60.0
+    ctc_wpm = ctc_word_count / max(eps, duration_minutes)
+
     features = {
         "ctc_blank_mean_run_fraction": b_mean_run_frac,
         "ctc_nonblank_error_geom_mean": nb_error_geom_mean,
@@ -215,7 +219,8 @@ def extract_features(ctc_tokens, ctc_probs):
         "ctc_token_count": float(n_frames),
         "ctc_prob_sum": float(np.sum(ctc_probs)),
         "ctc_word_count": float(ctc_word_count),
-        "ctc_word_prob_sum": float(ctc_word_prob_sum)
+        "ctc_word_prob_sum": float(ctc_word_prob_sum),
+        "ctc_wpm": float(ctc_wpm)
     }
     
     # Check for NaN or Inf

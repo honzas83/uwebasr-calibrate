@@ -327,6 +327,7 @@ def slice_utterance(utt_id, reference, word_array, word_times, ctc_tokens, ctc_p
             "ref_start": ref_start,
             "ref_end": ref_end,
             "reference_words": len(seg_ref),
+            "hypothesis_words": len(seg_hyp),
             "edit_errors": edit_errors,
             "accuracy": accuracy,
             "ctc_tokens": sel_tokens,
@@ -546,7 +547,7 @@ def get_test_real_windows(test_rows, asr_results, window_size=512, group_key="gr
         
         for chunk in group_chunks:
             current_window.append(chunk)
-            current_words += chunk["reference_words"]
+            current_words += chunk.get("hypothesis_words", chunk["reference_words"])
             
             if current_words >= window_size:
                 windows.append(current_window)

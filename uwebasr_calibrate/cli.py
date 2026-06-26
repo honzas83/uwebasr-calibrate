@@ -127,6 +127,7 @@ def evaluate_windowed_predictions(windows_by_key, predictor, split_name, split_w
     
     for key, windows in windows_by_key.items():
         agg_ref_words_total = 0
+        agg_hyp_words_total = 0
         agg_true_acc_weighted_sum = 0.0
         agg_est_acc_weighted_sum = 0.0
         n_windows = len(windows)
@@ -136,12 +137,14 @@ def evaluate_windowed_predictions(windows_by_key, predictor, split_name, split_w
             win_probs = []
             win_errors = 0
             win_ref_words = 0
+            win_hyp_words = 0
             
             for chunk in win:
                 win_tokens.extend(chunk["ctc_tokens"])
                 win_probs.extend(chunk["ctc_probs"])
                 win_errors += chunk["edit_errors"]
                 win_ref_words += chunk["reference_words"]
+                win_hyp_words += chunk.get("hypothesis_words", chunk["reference_words"])
                 
             if win_ref_words == 0:
                 continue
@@ -161,16 +164,18 @@ def evaluate_windowed_predictions(windows_by_key, predictor, split_name, split_w
                 "accuracy": win_true_acc,
                 "estimated_accuracy": win_est_acc,
                 "residual": win_true_acc - win_est_acc,
-                "ref_words": win_ref_words
+                "ref_words": win_ref_words,
+                "hyp_words": win_hyp_words
             })
             
             agg_ref_words_total += win_ref_words
-            agg_true_acc_weighted_sum += win_ref_words * win_true_acc
-            agg_est_acc_weighted_sum += win_ref_words * win_est_acc
+            agg_hyp_words_total += win_hyp_words
+            agg_true_acc_weighted_sum += win_hyp_words * win_true_acc
+            agg_est_acc_weighted_sum += win_hyp_words * win_est_acc
             
-        if agg_ref_words_total > 0:
-            agg_true_acc = agg_true_acc_weighted_sum / agg_ref_words_total
-            agg_est_acc = agg_est_acc_weighted_sum / agg_ref_words_total
+        if agg_hyp_words_total > 0:
+            agg_true_acc = agg_true_acc_weighted_sum / agg_hyp_words_total
+            agg_est_acc = agg_est_acc_weighted_sum / agg_hyp_words_total
             
             agg_records.append({
                 "sample_id": key,
@@ -179,6 +184,7 @@ def evaluate_windowed_predictions(windows_by_key, predictor, split_name, split_w
                 "estimated_accuracy": agg_est_acc,
                 "residual": agg_true_acc - agg_est_acc,
                 "ref_words": agg_ref_words_total,
+                "hyp_words": agg_hyp_words_total,
                 "n_windows": n_windows
             })
             
@@ -588,8 +594,9 @@ def run_calibration_workflow(args):
         
         # Compute test_real metrics
         if not df_test_real_group.empty:
-            test_real_mae = float(np.mean(np.abs(df_test_real_group["accuracy"] - df_test_real_group["estimated_accuracy"])))
-            test_real_mse = float(np.mean((df_test_real_group["accuracy"] - df_test_real_group["estimated_accuracy"]) ** 2))
+            weights = df_test_real_group["hyp_words"]
+            test_real_mae = float(np.average(np.abs(df_test_real_group["accuracy"] - df_test_real_group["estimated_accuracy"]), weights=weights))
+            test_real_mse = float(np.average((df_test_real_group["accuracy"] - df_test_real_group["estimated_accuracy"]) ** 2, weights=weights))
             test_real_corr = safe_pearsonr(df_test_real_group["accuracy"], df_test_real_group["estimated_accuracy"])
         else:
             test_real_mae = 0.0
@@ -611,8 +618,9 @@ def run_calibration_workflow(args):
         
         # Compute test_real_part metrics
         if not df_test_real_part_utt.empty:
-            test_real_part_mae = float(np.mean(np.abs(df_test_real_part_utt["accuracy"] - df_test_real_part_utt["estimated_accuracy"])))
-            test_real_part_mse = float(np.mean((df_test_real_part_utt["accuracy"] - df_test_real_part_utt["estimated_accuracy"]) ** 2))
+            weights = df_test_real_part_utt["hyp_words"]
+            test_real_part_mae = float(np.average(np.abs(df_test_real_part_utt["accuracy"] - df_test_real_part_utt["estimated_accuracy"]), weights=weights))
+            test_real_part_mse = float(np.average((df_test_real_part_utt["accuracy"] - df_test_real_part_utt["estimated_accuracy"]) ** 2, weights=weights))
             test_real_part_corr = safe_pearsonr(df_test_real_part_utt["accuracy"], df_test_real_part_utt["estimated_accuracy"])
         else:
             test_real_part_mae = 0.0
@@ -620,7 +628,7 @@ def run_calibration_workflow(args):
             test_real_part_corr = None
             
         logger.info(f"Test_real_part results: MAE={test_real_part_mae:.5f}, MSE={test_real_part_mse:.5f}, corr={test_real_part_corr}")
-
+ 
         # 11c. Evaluate test_real_snr (Windowed prediction grouped by group_id, including SNR)
         logger.info("Running test_real_snr windowed evaluation (grouped by group_id, including SNR)...")
         windows_by_group_snr = get_test_real_windows(test_rows, asr_results, window_size=test_real_window_size, group_key="group_id")
@@ -634,8 +642,9 @@ def run_calibration_workflow(args):
         
         # Compute test_real_snr metrics
         if not df_test_real_snr_group.empty:
-            test_real_snr_mae = float(np.mean(np.abs(df_test_real_snr_group["accuracy"] - df_test_real_snr_group["estimated_accuracy"])))
-            test_real_snr_mse = float(np.mean((df_test_real_snr_group["accuracy"] - df_test_real_snr_group["estimated_accuracy"]) ** 2))
+            weights = df_test_real_snr_group["hyp_words"]
+            test_real_snr_mae = float(np.average(np.abs(df_test_real_snr_group["accuracy"] - df_test_real_snr_group["estimated_accuracy"]), weights=weights))
+            test_real_snr_mse = float(np.average((df_test_real_snr_group["accuracy"] - df_test_real_snr_group["estimated_accuracy"]) ** 2, weights=weights))
             test_real_snr_corr = safe_pearsonr(df_test_real_snr_group["accuracy"], df_test_real_snr_group["estimated_accuracy"])
         else:
             test_real_snr_mae = 0.0
@@ -657,8 +666,9 @@ def run_calibration_workflow(args):
         
         # Compute test_real_part_snr metrics
         if not df_test_real_part_snr_utt.empty:
-            test_real_part_snr_mae = float(np.mean(np.abs(df_test_real_part_snr_utt["accuracy"] - df_test_real_part_snr_utt["estimated_accuracy"])))
-            test_real_part_snr_mse = float(np.mean((df_test_real_part_snr_utt["accuracy"] - df_test_real_part_snr_utt["estimated_accuracy"]) ** 2))
+            weights = df_test_real_part_snr_utt["hyp_words"]
+            test_real_part_snr_mae = float(np.average(np.abs(df_test_real_part_snr_utt["accuracy"] - df_test_real_part_snr_utt["estimated_accuracy"]), weights=weights))
+            test_real_part_snr_mse = float(np.average((df_test_real_part_snr_utt["accuracy"] - df_test_real_part_snr_utt["estimated_accuracy"]) ** 2, weights=weights))
             test_real_part_snr_corr = safe_pearsonr(df_test_real_part_snr_utt["accuracy"], df_test_real_part_snr_utt["estimated_accuracy"])
         else:
             test_real_part_snr_mae = 0.0
@@ -1092,8 +1102,9 @@ def run_calibration_workflow(args):
                 ds_test_real_window.to_csv(ds_output_dir / "predictions.test_real_window.csv", index=False)
                 
                 if not ds_test_real_group.empty:
-                    ds_test_real_mae = float(np.mean(np.abs(ds_test_real_group["accuracy"] - ds_test_real_group["estimated_accuracy"])))
-                    ds_test_real_mse = float(np.mean((ds_test_real_group["accuracy"] - ds_test_real_group["estimated_accuracy"]) ** 2))
+                    weights = ds_test_real_group["hyp_words"]
+                    ds_test_real_mae = float(np.average(np.abs(ds_test_real_group["accuracy"] - ds_test_real_group["estimated_accuracy"]), weights=weights))
+                    ds_test_real_mse = float(np.average((ds_test_real_group["accuracy"] - ds_test_real_group["estimated_accuracy"]) ** 2, weights=weights))
                     ds_test_real_corr = safe_pearsonr(ds_test_real_group["accuracy"], ds_test_real_group["estimated_accuracy"])
                 else:
                     ds_test_real_mae = 0.0
@@ -1112,8 +1123,9 @@ def run_calibration_workflow(args):
                 ds_test_real_part_window.to_csv(ds_output_dir / "predictions.test_real_part_window.csv", index=False)
                 
                 if not ds_test_real_part_utt.empty:
-                    ds_test_real_part_mae = float(np.mean(np.abs(ds_test_real_part_utt["accuracy"] - ds_test_real_part_utt["estimated_accuracy"])))
-                    ds_test_real_part_mse = float(np.mean((ds_test_real_part_utt["accuracy"] - ds_test_real_part_utt["estimated_accuracy"]) ** 2))
+                    weights = ds_test_real_part_utt["hyp_words"]
+                    ds_test_real_part_mae = float(np.average(np.abs(ds_test_real_part_utt["accuracy"] - ds_test_real_part_utt["estimated_accuracy"]), weights=weights))
+                    ds_test_real_part_mse = float(np.average((ds_test_real_part_utt["accuracy"] - ds_test_real_part_utt["estimated_accuracy"]) ** 2, weights=weights))
                     ds_test_real_part_corr = safe_pearsonr(ds_test_real_part_utt["accuracy"], ds_test_real_part_utt["estimated_accuracy"])
                 else:
                     ds_test_real_part_mae = 0.0
@@ -1132,8 +1144,9 @@ def run_calibration_workflow(args):
                 ds_test_real_snr_window.to_csv(ds_output_dir / "predictions.test_real_snr_window.csv", index=False)
                 
                 if not ds_test_real_snr_group.empty:
-                    ds_test_real_snr_mae = float(np.mean(np.abs(ds_test_real_snr_group["accuracy"] - ds_test_real_snr_group["estimated_accuracy"])))
-                    ds_test_real_snr_mse = float(np.mean((ds_test_real_snr_group["accuracy"] - ds_test_real_snr_group["estimated_accuracy"]) ** 2))
+                    weights = ds_test_real_snr_group["hyp_words"]
+                    ds_test_real_snr_mae = float(np.average(np.abs(ds_test_real_snr_group["accuracy"] - ds_test_real_snr_group["estimated_accuracy"]), weights=weights))
+                    ds_test_real_snr_mse = float(np.average((ds_test_real_snr_group["accuracy"] - ds_test_real_snr_group["estimated_accuracy"]) ** 2, weights=weights))
                     ds_test_real_snr_corr = safe_pearsonr(ds_test_real_snr_group["accuracy"], ds_test_real_snr_group["estimated_accuracy"])
                 else:
                     ds_test_real_snr_mae = 0.0
@@ -1152,8 +1165,9 @@ def run_calibration_workflow(args):
                 ds_test_real_part_snr_window.to_csv(ds_output_dir / "predictions.test_real_part_snr_window.csv", index=False)
                 
                 if not ds_test_real_part_snr_utt.empty:
-                    ds_test_real_part_snr_mae = float(np.mean(np.abs(ds_test_real_part_snr_utt["accuracy"] - ds_test_real_part_snr_utt["estimated_accuracy"])))
-                    ds_test_real_part_snr_mse = float(np.mean((ds_test_real_part_snr_utt["accuracy"] - ds_test_real_part_snr_utt["estimated_accuracy"]) ** 2))
+                    weights = ds_test_real_part_snr_utt["hyp_words"]
+                    ds_test_real_part_snr_mae = float(np.average(np.abs(ds_test_real_part_snr_utt["accuracy"] - ds_test_real_part_snr_utt["estimated_accuracy"]), weights=weights))
+                    ds_test_real_part_snr_mse = float(np.average((ds_test_real_part_snr_utt["accuracy"] - ds_test_real_part_snr_utt["estimated_accuracy"]) ** 2, weights=weights))
                     ds_test_real_part_snr_corr = safe_pearsonr(ds_test_real_part_snr_utt["accuracy"], ds_test_real_part_snr_utt["estimated_accuracy"])
                 else:
                     ds_test_real_part_snr_mae = 0.0
@@ -1178,8 +1192,9 @@ def run_calibration_workflow(args):
                         ds_test_real_snr_val_window.to_csv(ds_output_dir / f"predictions.test_real_snr_{snr_str}_window.csv", index=False)
                         
                         if not ds_test_real_snr_val_group.empty:
-                            ds_mae_s = float(np.mean(np.abs(ds_test_real_snr_val_group["accuracy"] - ds_test_real_snr_val_group["estimated_accuracy"])))
-                            ds_mse_s = float(np.mean((ds_test_real_snr_val_group["accuracy"] - ds_test_real_snr_val_group["estimated_accuracy"]) ** 2))
+                            weights = ds_test_real_snr_val_group["hyp_words"]
+                            ds_mae_s = float(np.average(np.abs(ds_test_real_snr_val_group["accuracy"] - ds_test_real_snr_val_group["estimated_accuracy"]), weights=weights))
+                            ds_mse_s = float(np.average((ds_test_real_snr_val_group["accuracy"] - ds_test_real_snr_val_group["estimated_accuracy"]) ** 2, weights=weights))
                             ds_corr_s = safe_pearsonr(ds_test_real_snr_val_group["accuracy"], ds_test_real_snr_val_group["estimated_accuracy"])
                         else:
                             ds_mae_s = 0.0
@@ -1198,8 +1213,9 @@ def run_calibration_workflow(args):
                         ds_test_real_part_snr_val_window.to_csv(ds_output_dir / f"predictions.test_real_part_snr_{snr_str}_window.csv", index=False)
                         
                         if not ds_test_real_part_snr_val_utt.empty:
-                            ds_part_mae_s = float(np.mean(np.abs(ds_test_real_part_snr_val_utt["accuracy"] - ds_test_real_part_snr_val_utt["estimated_accuracy"])))
-                            ds_part_mse_s = float(np.mean((ds_test_real_part_snr_val_utt["accuracy"] - ds_test_real_part_snr_val_utt["estimated_accuracy"]) ** 2))
+                            weights = ds_test_real_part_snr_val_utt["hyp_words"]
+                            ds_part_mae_s = float(np.average(np.abs(ds_test_real_part_snr_val_utt["accuracy"] - ds_test_real_part_snr_val_utt["estimated_accuracy"]), weights=weights))
+                            ds_part_mse_s = float(np.average((ds_test_real_part_snr_val_utt["accuracy"] - ds_test_real_part_snr_val_utt["estimated_accuracy"]) ** 2, weights=weights))
                             ds_part_corr_s = safe_pearsonr(ds_test_real_part_snr_val_utt["accuracy"], ds_test_real_part_snr_val_utt["estimated_accuracy"])
                         else:
                             ds_part_mae_s = 0.0

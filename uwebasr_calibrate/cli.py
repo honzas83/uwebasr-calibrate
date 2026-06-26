@@ -181,6 +181,8 @@ def evaluate_windowed_predictions(windows_by_key, predictor, split_name, split_w
                 "n_windows": n_windows
             })
             
+    return pd.DataFrame(window_records), pd.DataFrame(agg_records)
+
 def compute_overall_accuracy(rows, df_utt_metrics):
     utt_ids = {r["utt_id"] for r in rows}
     df_filtered = df_utt_metrics[df_utt_metrics["utt_id"].isin(utt_ids)]

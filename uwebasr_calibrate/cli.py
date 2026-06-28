@@ -340,31 +340,52 @@ def run_calibration_workflow(args):
         # 5. Split rows by speaker/group
         from uwebasr_calibrate.data import get_speaker_id, get_group_id
         
+        train_rows = []
+        test_rows = []
+        train_speakers = []
+        test_speakers = []
+        
         try:
-            has_explicit_split = any("split" in r and r["split"] in ["train", "test"] for r in filtered_rows)
-            if has_explicit_split:
-                logger.info("Using pre-defined split from 'split' column in the manifest.")
-                train_rows = [r for r in filtered_rows if r.get("split") == "train"]
-                test_rows = [r for r in filtered_rows if r.get("split") == "test"]
+            # Group rows by dataset index to split each dataset individually, ensuring consistency with single-dataset runs
+            from collections import defaultdict
+            rows_by_dataset = defaultdict(list)
+            for r in filtered_rows:
+                rows_by_dataset[r["dataset_idx"]].append(r)
                 
-                for r in train_rows:
-                    r["speaker_id"] = get_speaker_id(r["utt_id"], r.get("speaker_id"))
-                    r["group_id"] = get_group_id(r["utt_id"], r.get("group_id"))
-                for r in test_rows:
-                    r["speaker_id"] = get_speaker_id(r["utt_id"], r.get("speaker_id"))
-                    r["group_id"] = get_group_id(r["utt_id"], r.get("group_id"))
+            for idx in sorted(rows_by_dataset.keys()):
+                ds_rows = rows_by_dataset[idx]
+                has_explicit_split = any("split" in r and r["split"] in ["train", "test"] for r in ds_rows)
+                
+                if has_explicit_split:
+                    logger.info(f"Using pre-defined split from 'split' column in dataset {idx+1}.")
+                    ds_train = [r for r in ds_rows if r.get("split") == "train"]
+                    ds_test = [r for r in ds_rows if r.get("split") == "test"]
                     
-                train_speakers = list(set(r["speaker_id"] for r in train_rows if r["speaker_id"] is not None))
-                test_speakers = list(set(r["speaker_id"] for r in test_rows if r["speaker_id"] is not None))
+                    for r in ds_train:
+                        r["speaker_id"] = get_speaker_id(r["utt_id"], r.get("speaker_id"))
+                        r["group_id"] = get_group_id(r["utt_id"], r.get("group_id"))
+                    for r in ds_test:
+                        r["speaker_id"] = get_speaker_id(r["utt_id"], r.get("speaker_id"))
+                        r["group_id"] = get_group_id(r["utt_id"], r.get("group_id"))
+                        
+                    ds_train_sp = list(set(r["speaker_id"] for r in ds_train if r["speaker_id"] is not None))
+                    ds_test_sp = list(set(r["speaker_id"] for r in ds_test if r["speaker_id"] is not None))
+                    
+                    logger.info(f"Dataset {idx+1} split verified. Train: {len(ds_train)} utterances. Test: {len(ds_test)} utterances.")
+                else:
+                    ds_train, ds_test, ds_train_sp, ds_test_sp = split_dataset(
+                        ds_rows, train_fraction=0.8, seed=args.seed, split_group=args.split_group
+                    )
+                    logger.info(f"Dataset {idx+1} split completed. Train: {len(ds_train)} utterances. Test: {len(ds_test)} utterances.")
+                    if args.split_group == "speaker":
+                        logger.info(f"Dataset {idx+1} train speakers: {len(ds_train_sp)}. Test speakers: {len(ds_test_sp)}")
+                        
+                train_rows.extend(ds_train)
+                test_rows.extend(ds_test)
+                train_speakers.extend(ds_train_sp)
+                test_speakers.extend(ds_test_sp)
                 
-                logger.info(f"Split verified. Train: {len(train_rows)} utterances. Test: {len(test_rows)} utterances.")
-            else:
-                train_rows, test_rows, train_speakers, test_speakers = split_dataset(
-                    filtered_rows, train_fraction=0.8, seed=args.seed, split_group=args.split_group
-                )
-                logger.info(f"Split completed. Train: {len(train_rows)} utterances. Test: {len(test_rows)} utterances.")
-                if args.split_group == "speaker":
-                    logger.info(f"Train speakers: {len(train_speakers)}. Test speakers: {len(test_speakers)}")
+            logger.info(f"Overall split completed across {n_datasets} dataset(s). Total Train: {len(train_rows)} utterances. Total Test: {len(test_rows)} utterances.")
         except Exception as e:
             logger.error(f"Dataset split failed: {e}")
             raise e

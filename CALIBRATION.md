@@ -51,7 +51,7 @@ uwebasr-calibrate \
   --seed 13
 ```
 
-All other parameters (such as `--target-segments`, `--target-ensemble`, `--jobs`, `--seed`, `--split-group`, `--loss`, `--skip-bad-rows`, etc.) act as global configuration values applied to all specified tasks.
+All other parameters (such as `--target-segments`, `--target-ensemble`, `--jobs`, `--seed`, `--split-group`, `--loss`, `--skip-bad-rows`, `--full-features`, etc.) act as global configuration values applied to all specified tasks.
 
 The `--uwebasr-url` argument is the complete model endpoint URL. Users normally
 pass it without the `format` query parameter. The script requests:
@@ -821,11 +821,12 @@ The coefficient of variation must use the same standard-deviation convention in
 training and inference. If the mean run length is zero, the coefficient of
 variation is `0.0`.
 
-### Top-20 Feature Vector Order
+### Feature Vector Orders
 
-The serialized model should store the feature list explicitly. The current
-feature vector order is:
+The serialized model stores the feature list explicitly. The implementation supports two feature configurations:
 
+#### Standard Feature Order (25 features, default)
+Used by default. Includes the following features:
 ```text
 [
   ctc_blank_mean_run_fraction,
@@ -849,9 +850,21 @@ feature vector order is:
   ctc_blank_neglog_error_p50,
   ctc_blank_max_run_fraction,
   ctc_token_count,
-  ctc_prob_sum
+  ctc_prob_sum,
+  ctc_word_count,
+  ctc_word_prob_sum,
+  ctc_wpm
 ]
 ```
+
+#### Full Feature Order (69 features, enabled via `--full-features`)
+Used when `--full-features` is specified. In addition to the standard features, it includes a complete set of deciles, thresholds, and run bounds:
+- **General Stats & Runs**: Standard features minus specific sparse percentiles/parameters.
+- **Full Blank Percentiles**: `ctc_blank_p000` to `ctc_blank_p100` (steps of 10)
+- **Full Non-blank Percentiles**: `ctc_nonblank_p000` to `ctc_nonblank_p100` (steps of 10), plus `ctc_nonblank_p001`
+- **Full Non-blank Thresholds**: `ctc_nonblank_frac_lt_10` to `ctc_nonblank_frac_lt_90` (steps of 10%)
+- **Full Run Bounds**: `ctc_blank_run_le_1` to `ctc_blank_run_le_5`, and `ctc_nonblank_run_le_1` to `ctc_nonblank_run_le_5`
+- **Full Blank Neglog Error Percentiles**: `ctc_blank_neglog_error_p000` to `ctc_blank_neglog_error_p100` (steps of 10)
 
 The training, validation, test, and inference code must use exactly this stored
 order when constructing the model input matrix.
@@ -880,9 +893,7 @@ The training lifecycle is:
 6. Evaluate the calibrated predictor on `validation`, `test`, and `test_real`
    without refitting anything on those targets.
 
-Feature standardization statistics are always computed from the data used to
-fit the corresponding model. The final serialized predictor stores the
-standardization statistics fitted on the complete `train` ensemble partition.
+Tree-based gradient boosting models (such as `HistGradientBoostingRegressor`) are scale-invariant, so feature scaling/standardization is not performed, and no scale parameters are stored in the final model.
 
 The affine calibration has the form:
 

@@ -993,7 +993,7 @@ def run_calibration_workflow(args):
         # 14. Save metadata.json
         metadata = {
             "endpoint_url": args.uwebasr_url,
-            "feature_list": FEATURE_ORDER,
+            "feature_list": FEATURE_ORDER_FULL if args.full_features else FEATURE_ORDER_STANDARD,
             "feature_version": "1.0",
             "normalizer_version": "default_calibration_normalizer",
             "normalizer_regex": r"[^\W_]+(?:['’][^\W_]+)?",

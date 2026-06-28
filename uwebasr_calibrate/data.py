@@ -481,7 +481,7 @@ def generate_ensemble_samples(segments, sample_count, seed, n_jobs=1, min_words=
         num_batches = max(1, n_jobs * 4)
         indices_batches = np.array_split(range(sample_count), num_batches)
         
-        results = Parallel(n_jobs=n_jobs)(
+        results = Parallel(n_jobs=n_jobs, prefer="threads")(
             delayed(_generate_ensemble_batch)(batch, deciles, seed, min_words, max_words, min_segments)
             for batch in indices_batches
         )

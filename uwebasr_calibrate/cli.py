@@ -33,6 +33,27 @@ import threading
 
 thread_local = threading.local()
 
+class LazyASRResults:
+    def __init__(self, cache_dir):
+        self.cache_dir = Path(cache_dir)
+        
+    def __getitem__(self, utt_id):
+        cache_file = self.cache_dir / f"{utt_id}.json"
+        if not cache_file.exists():
+            raise KeyError(f"ASR result for {utt_id} not found in cache.")
+        with open(cache_file, "r", encoding="utf-8") as f:
+            return json.load(f)
+            
+    def get(self, utt_id, default=None):
+        try:
+            return self[utt_id]
+        except KeyError:
+            return default
+
+    def __contains__(self, utt_id):
+        return (self.cache_dir / f"{utt_id}.json").exists()
+
+
 def get_session():
     if not hasattr(thread_local, "session"):
         thread_local.session = requests.Session()
@@ -389,7 +410,6 @@ def run_calibration_workflow(args):
             utt_to_url[r["utt_id"]] = utt_to_url[r["original_utt_id"]]
             
         # 3. Recognition (Resumable)
-        asr_results = {}
         failed_recognition = []
         
         logger.info(f"Running ASR recognition with {args.jobs} jobs...")
@@ -405,7 +425,7 @@ def run_calibration_workflow(args):
                 utt_id, success, data = fut.result()
                 completed_count += 1
                 if success:
-                    asr_results[utt_id] = data
+                    # Successfully processed and cached on disk. Do not store in RAM.
                     if completed_count % log_interval == 0 or completed_count == total_utts:
                         logger.info(f"ASR progress: {completed_count}/{total_utts} utterances processed.")
                 else:
@@ -417,6 +437,12 @@ def run_calibration_workflow(args):
             raise RuntimeError(f"{len(failed_recognition)} utterances failed recognition.")
             
         logger.info("All utterances successfully recognized and verified.")
+        
+        import gc
+        gc.collect()
+        
+        # Instantiate Lazy ASR results loader
+        asr_results = LazyASRResults(cache_dir)
         
         # 4. Compute normalized reference/hypothesis metrics & save utterance_metrics.csv
         utt_metrics = []

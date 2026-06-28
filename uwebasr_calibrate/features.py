@@ -88,6 +88,9 @@ def extract_features(ctc_tokens, ctc_probs, ctc_frame_len=0.04):
     if n_frames == 0:
         raise ValueError("Empty CTC stream")
         
+    # Convert tokens to string to handle potential None / null values gracefully
+    ctc_tokens = [str(tok) if tok is not None else "" for tok in ctc_tokens]
+        
     # Clip probabilities
     probs_clipped = np.clip(ctc_probs, eps, 1.0 - eps)
     

@@ -21,7 +21,7 @@ from uwebasr_calibrate.data import (
     generate_ensemble_samples, get_test_real_windows,
     normalize_text as data_normalize_text
 )
-from uwebasr_calibrate.features import extract_features, FEATURE_ORDER
+from uwebasr_calibrate.features import extract_features, FEATURE_ORDER_STANDARD, FEATURE_ORDER_FULL
 from uwebasr_calibrate.model import train_calibration_model, CalibratedPredictor
 
 # Setup logging
@@ -857,7 +857,7 @@ def run_calibration_workflow(args):
         # Actually, we can just save features for train and test ensemble samples to keep features.csv size manageable (~80k rows, 23 columns).
         df_features = pd.DataFrame(
             feat_rows,
-            columns=["sample_id", "split", "accuracy"] + FEATURE_ORDER
+            columns=["sample_id", "split", "accuracy"] + (FEATURE_ORDER_FULL if args.full_features else FEATURE_ORDER_STANDARD)
         )
         df_features.to_csv(output_dir / "features.csv", index=False)
         logger.info("Saved features.csv")

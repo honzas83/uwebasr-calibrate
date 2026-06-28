@@ -12,10 +12,11 @@ class CalibratedPredictor:
     """
     Combines HistGradientBoostingRegressor and affine calibration.
     """
-    def __init__(self, model, a, b):
+    def __init__(self, model, a, b, full_features=False):
         self.model = model
         self.a = a
         self.b = b
+        self.full_features = full_features
         
     def predict(self, X):
         raw_pred = self.model.predict(X)
@@ -99,8 +100,11 @@ def train_calibration_model(train_samples, seed=13, loss_metric="mae"):
     
     logger.info(f"Fitted affine calibration: Acc_hat = clip({a:.5f} + {b:.5f} * HGBR_pred, 0, 1)")
     
+    # Determine if full features are used
+    full_features = bool(X.shape[1] > 25)
+    
     # Create final calibrated predictor
-    predictor = CalibratedPredictor(final_model, a, b)
+    predictor = CalibratedPredictor(final_model, a, b, full_features=full_features)
     
     # Get validation predictions with the final calibrated model
     val_pred_raw = final_model.predict(X_val)

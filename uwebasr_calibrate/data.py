@@ -432,7 +432,7 @@ def sample_ensemble_single(deciles, target_words, min_segments, rng):
         
     return chosen_segs
 
-def _generate_ensemble_batch(batch_indices, deciles, seed, min_words, max_words, min_segments, cache_dir=None):
+def _generate_ensemble_batch(batch_indices, deciles, seed, min_words, max_words, min_segments, cache_dir=None, full_features=False):
     local_asr_cache = {}
     batch_samples = []
     
@@ -491,7 +491,7 @@ def _generate_ensemble_batch(batch_indices, deciles, seed, min_words, max_words,
         accuracy = max(0.0, 1.0 - edit_errors / ref_words)
         
         # Extract features
-        features = extract_features(tokens_all, probs_all)
+        features = extract_features(tokens_all, probs_all, full_features=full_features)
         
         batch_samples.append({
             "sample_id": f"sample_{i}",
@@ -501,7 +501,7 @@ def _generate_ensemble_batch(batch_indices, deciles, seed, min_words, max_words,
         })
     return batch_samples
 
-def generate_ensemble_samples(segments, sample_count, seed, n_jobs=1, min_words=128, max_words=1024, min_segments=1, cache_dir=None):
+def generate_ensemble_samples(segments, sample_count, seed, n_jobs=1, min_words=128, max_words=1024, min_segments=1, cache_dir=None, full_features=False):
     """
     Generates sample_count ensemble samples.
     """
@@ -513,7 +513,7 @@ def generate_ensemble_samples(segments, sample_count, seed, n_jobs=1, min_words=
     
     if n_jobs == 1:
         # Avoid multiprocessing overhead entirely for single job
-        samples = _generate_ensemble_batch(range(sample_count), deciles, seed, min_words, max_words, min_segments, cache_dir)
+        samples = _generate_ensemble_batch(range(sample_count), deciles, seed, min_words, max_words, min_segments, cache_dir, full_features)
     else:
         # Split sample indices into n_jobs * 4 batches to balance load and minimize IPC overhead
         num_batches = max(1, n_jobs * 4)
@@ -522,7 +522,7 @@ def generate_ensemble_samples(segments, sample_count, seed, n_jobs=1, min_words=
         # Run standard multiprocessing (loky) to bypass the GIL and use all cores,
         # which is memory-efficient since deciles no longer contain ctc_tokens and ctc_probs.
         results = Parallel(n_jobs=n_jobs)(
-            delayed(_generate_ensemble_batch)(batch, deciles, seed, min_words, max_words, min_segments, cache_dir)
+            delayed(_generate_ensemble_batch)(batch, deciles, seed, min_words, max_words, min_segments, cache_dir, full_features)
             for batch in indices_batches
         )
         

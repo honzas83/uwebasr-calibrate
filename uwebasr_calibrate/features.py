@@ -1,8 +1,8 @@
 import math
 import numpy as np
 
-# Canonical order of features in the feature vector
-FEATURE_ORDER = [
+# Standard feature order (for backward compatibility)
+FEATURE_ORDER_STANDARD = [
     "ctc_blank_mean_run_fraction",
     "ctc_nonblank_error_geom_mean",
     "ctc_nonblank_to_blank_ratio",
@@ -28,6 +28,95 @@ FEATURE_ORDER = [
     "ctc_word_count",
     "ctc_word_prob_sum",
     "ctc_wpm"
+]
+
+# Legacy alias
+FEATURE_ORDER = FEATURE_ORDER_STANDARD
+
+# Full feature order with expanded deciles and parameters
+FEATURE_ORDER_FULL = [
+    # General stats
+    "ctc_blank_mean_run_fraction",
+    "ctc_nonblank_error_geom_mean",
+    "ctc_nonblank_to_blank_ratio",
+    "ctc_nonblank_mean_run_fraction",
+    "ctc_nonblank_harmonic_mean",
+    "ctc_blank_range",
+    "ctc_blank_run_len_cv",
+    "ctc_blank_log_ratio",
+    "ctc_nonblank_error_mean",
+    "ctc_nonblank_geom_mean",
+    "ctc_blank_max_run_fraction",
+    "ctc_token_count",
+    "ctc_prob_sum",
+    "ctc_word_count",
+    "ctc_word_prob_sum",
+    "ctc_wpm",
+    
+    # Specific standard percentile
+    "ctc_nonblank_p001",
+    
+    # Full blank percentiles
+    "ctc_blank_p000",
+    "ctc_blank_p010",
+    "ctc_blank_p020",
+    "ctc_blank_p030",
+    "ctc_blank_p040",
+    "ctc_blank_p050",
+    "ctc_blank_p060",
+    "ctc_blank_p070",
+    "ctc_blank_p080",
+    "ctc_blank_p090",
+    "ctc_blank_p100",
+    
+    # Full nonblank percentiles
+    "ctc_nonblank_p000",
+    "ctc_nonblank_p010",
+    "ctc_nonblank_p020",
+    "ctc_nonblank_p030",
+    "ctc_nonblank_p040",
+    "ctc_nonblank_p050",
+    "ctc_nonblank_p060",
+    "ctc_nonblank_p070",
+    "ctc_nonblank_p080",
+    "ctc_nonblank_p090",
+    "ctc_nonblank_p100",
+    
+    # Full nonblank thresholds
+    "ctc_nonblank_frac_lt_10",
+    "ctc_nonblank_frac_lt_20",
+    "ctc_nonblank_frac_lt_30",
+    "ctc_nonblank_frac_lt_40",
+    "ctc_nonblank_frac_lt_50",
+    "ctc_nonblank_frac_lt_60",
+    "ctc_nonblank_frac_lt_70",
+    "ctc_nonblank_frac_lt_80",
+    "ctc_nonblank_frac_lt_90",
+    
+    # Full run bounds
+    "ctc_blank_run_le_1",
+    "ctc_blank_run_le_2",
+    "ctc_blank_run_le_3",
+    "ctc_blank_run_le_4",
+    "ctc_blank_run_le_5",
+    "ctc_nonblank_run_le_1",
+    "ctc_nonblank_run_le_2",
+    "ctc_nonblank_run_le_3",
+    "ctc_nonblank_run_le_4",
+    "ctc_nonblank_run_le_5",
+    
+    # Full blank neglog error percentiles
+    "ctc_blank_neglog_error_p000",
+    "ctc_blank_neglog_error_p010",
+    "ctc_blank_neglog_error_p020",
+    "ctc_blank_neglog_error_p030",
+    "ctc_blank_neglog_error_p040",
+    "ctc_blank_neglog_error_p050",
+    "ctc_blank_neglog_error_p060",
+    "ctc_blank_neglog_error_p070",
+    "ctc_blank_neglog_error_p080",
+    "ctc_blank_neglog_error_p090",
+    "ctc_blank_neglog_error_p100"
 ]
 
 def nearest_rank_percentile(sorted_values, q):
@@ -74,9 +163,9 @@ def compute_run_lengths(mask):
         
     return blank_runs, nonblank_runs
 
-def extract_features(ctc_tokens, ctc_probs, ctc_frame_len=0.04):
+def extract_features(ctc_tokens, ctc_probs, ctc_frame_len=0.04, full_features=False):
     """
-    Extracts the top 20 CTC confidence features from the ctc_tokens and ctc_probs streams.
+    Extracts the CTC confidence features from the ctc_tokens and ctc_probs streams.
     Raises ValueError if inputs are invalid or empty, or if NaN/Inf features are produced.
     """
     eps = 1e-9
@@ -115,6 +204,16 @@ def extract_features(ctc_tokens, ctc_probs, ctc_frame_len=0.04):
     nb_p001 = nearest_rank_percentile(sorted_nonblank, 1)
     nb_p070 = nearest_rank_percentile(sorted_nonblank, 70)
     
+    # Calculate blank decile percentiles (0, 10, 20, ..., 100)
+    blank_deciles = {}
+    for q in range(0, 110, 10):
+        blank_deciles[f"ctc_blank_p{q:03d}"] = nearest_rank_percentile(sorted_blank, q)
+        
+    # Calculate nonblank decile percentiles (0, 10, 20, ..., 100)
+    nonblank_deciles = {}
+    for q in range(0, 110, 10):
+        nonblank_deciles[f"ctc_nonblank_p{q:03d}"] = nearest_rank_percentile(sorted_nonblank, q)
+    
     # 2. distribution stats
     nb_geom_mean = np.exp(np.mean(np.log(nonblank_values)))
     nb_error_mean = np.mean(1.0 - nonblank_values)
@@ -128,10 +227,20 @@ def extract_features(ctc_tokens, ctc_probs, ctc_frame_len=0.04):
     
     nb_frac_lt_50 = np.mean(nonblank_values < 0.50)
     
-    # Blank neglog error p50 (uses numpy linear quantile)
+    # Calculate parameterized thresholds for nonblank
+    nonblank_thresholds = {}
+    for th in range(10, 100, 10):
+        nonblank_thresholds[f"ctc_nonblank_frac_lt_{th}"] = np.mean(nonblank_values < (th / 100.0))
+    
+    # Blank neglog error percentiles (uses numpy linear quantile)
     blank_errors = np.maximum(eps, 1.0 - blank_values)
     blank_neglog_errors = -np.log(blank_errors)
     b_neglog_error_p50 = np.percentile(blank_neglog_errors, 50, method="linear")
+    
+    # Calculate blank neglog error decile percentiles
+    blank_neglog_deciles = {}
+    for q in range(0, 110, 10):
+        blank_neglog_deciles[f"ctc_blank_neglog_error_p{q:03d}"] = np.percentile(blank_neglog_errors, q, method="linear")
     
     # 3. count-ratios
     blank_count = len(blank_values)
@@ -154,6 +263,15 @@ def extract_features(ctc_tokens, ctc_probs, ctc_frame_len=0.04):
         
     b_short_run_frac = np.mean(np.array(blank_runs) <= 2) if blank_runs else 0.0
     nb_short_run_frac = np.mean(np.array(nonblank_runs) <= 2) if nonblank_runs else 0.0
+    
+    # Calculate parameterized run bounds
+    blank_run_bounds = {}
+    for L in range(1, 6):
+        blank_run_bounds[f"ctc_blank_run_le_{L}"] = np.mean(np.array(blank_runs) <= L) if blank_runs else 0.0
+        
+    nonblank_run_bounds = {}
+    for L in range(1, 6):
+        nonblank_run_bounds[f"ctc_nonblank_run_le_{L}"] = np.mean(np.array(nonblank_runs) <= L) if nonblank_runs else 0.0
     
     # 5. CTC decoding to words and word probabilities
     collapsed_tokens = []
@@ -237,9 +355,18 @@ def extract_features(ctc_tokens, ctc_probs, ctc_frame_len=0.04):
         "ctc_wpm": float(ctc_wpm)
     }
     
+    # Add new expanded features
+    features.update(blank_deciles)
+    features.update(nonblank_deciles)
+    features.update(nonblank_thresholds)
+    features.update(blank_run_bounds)
+    features.update(nonblank_run_bounds)
+    features.update(blank_neglog_deciles)
+    
     # Check for NaN or Inf
     for name, val in features.items():
         if not math.isfinite(val):
             raise ValueError(f"Feature '{name}' has non-finite value: {val}")
             
-    return [features[name] for name in FEATURE_ORDER]
+    order = FEATURE_ORDER_FULL if full_features else FEATURE_ORDER_STANDARD
+    return [features[name] for name in order]

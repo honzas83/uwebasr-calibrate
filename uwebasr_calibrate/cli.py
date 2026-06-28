@@ -167,7 +167,7 @@ def evaluate_windowed_predictions(windows_by_key, predictor, split_name, split_w
             win_true_acc = max(0.0, 1.0 - win_errors / win_ref_words)
             
             try:
-                win_features = extract_features(win_tokens, win_probs)
+                win_features = extract_features(win_tokens, win_probs, full_features=getattr(predictor, "full_features", False))
                 features_list.append(win_features)
                 has_features = True
             except Exception as e:
@@ -616,12 +616,12 @@ def run_calibration_workflow(args):
         train_samples, train_deciles_count = generate_ensemble_samples(
             train_segments, args.target_ensemble, seed=args.seed, n_jobs=args.jobs,
             min_words=args.ensemble_min_words, max_words=args.ensemble_max_words, min_segments=args.ensemble_min_segments,
-            cache_dir=cache_dir
+            cache_dir=cache_dir, full_features=args.full_features
         )
         test_samples, test_deciles_count = generate_ensemble_samples(
             test_segments, args.target_ensemble // 4, seed=args.seed, n_jobs=args.jobs,
             min_words=args.ensemble_min_words, max_words=args.ensemble_max_words, min_segments=args.ensemble_min_segments,
-            cache_dir=cache_dir
+            cache_dir=cache_dir, full_features=args.full_features
         )
         
         logger.info("Extracted features for ensemble samples.")
@@ -1153,7 +1153,7 @@ def run_calibration_workflow(args):
                     ds_test_samples, _ = generate_ensemble_samples(
                         ds_test_segments, args.target_ensemble // 4, seed=args.seed, n_jobs=args.jobs,
                         min_words=args.ensemble_min_words, max_words=args.ensemble_max_words, min_segments=args.ensemble_min_segments,
-                        cache_dir=cache_dir
+                        cache_dir=cache_dir, full_features=args.full_features
                     )
                     
                     X_ds_test = np.array([s["features"] for s in ds_test_samples])
@@ -1525,6 +1525,7 @@ def main():
     parser.add_argument("--limit", type=int, default=None, help="Limit number of utterances to process for debugging")
     parser.add_argument("--snr", action="append", type=float, default=[], help="SNR levels for training data augmentation with additive noise")
     parser.add_argument("--target-ensemble", type=int, default=64000, help="Target number of ensemble samples for training/validation (test size will be 1/4 of this)")
+    parser.add_argument("--full-features", action="store_true", help="Use expanded deciles and parameterized features in the feature vectors")
     
     args = parser.parse_args()
     

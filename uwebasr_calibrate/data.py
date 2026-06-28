@@ -245,7 +245,7 @@ def generate_ref_spans(num_ref_words, min_words=10, max_words=256, rng=None):
         
     return spans
 
-def slice_utterance(utt_id, reference, word_array, word_times, ctc_tokens, ctc_probs, ctc_frame_len, ref_spans, speaker_id=None, group_id=None):
+def slice_utterance(utt_id, reference, word_array, word_times, ctc_tokens, ctc_probs, ctc_frame_len, ref_spans, speaker_id=None, group_id=None, include_ctc=True):
     """
     Slices the utterance into segments based on reference word spans.
     """
@@ -320,7 +320,7 @@ def slice_utterance(utt_id, reference, word_array, word_times, ctc_tokens, ctc_p
         edit_errors = out.substitutions + out.insertions + out.deletions
         accuracy = max(0.0, 1.0 - edit_errors / len(seg_ref))
         
-        segments.append({
+        seg_dict = {
             "utt_id": utt_id,
             "speaker_id": speaker_id,
             "group_id": group_id,
@@ -330,9 +330,15 @@ def slice_utterance(utt_id, reference, word_array, word_times, ctc_tokens, ctc_p
             "hypothesis_words": len(seg_hyp),
             "edit_errors": edit_errors,
             "accuracy": accuracy,
-            "ctc_tokens": sel_tokens,
-            "ctc_probs": sel_probs
-        })
+            "start_time": float(start_time),
+            "end_time": float(end_time)
+        }
+        
+        if include_ctc:
+            seg_dict["ctc_tokens"] = sel_tokens
+            seg_dict["ctc_probs"] = sel_probs
+            
+        segments.append(seg_dict)
         
     return segments
 
@@ -367,7 +373,8 @@ def run_segmentation(rows, asr_results, seed, variant_index=0, min_words=10, max
             ctc_frame_len=asr_result["ctc_frame_len"],
             ref_spans=ref_spans,
             speaker_id=row["speaker_id"],
-            group_id=row["group_id"]
+            group_id=row["group_id"],
+            include_ctc=False
         )
         
         all_segments.extend(segments)
@@ -425,8 +432,10 @@ def sample_ensemble_single(deciles, target_words, min_segments, rng):
         
     return chosen_segs
 
-def _generate_ensemble_batch(batch_indices, deciles, seed, min_words, max_words, min_segments):
+def _generate_ensemble_batch(batch_indices, deciles, seed, min_words, max_words, min_segments, cache_dir=None):
+    local_asr_cache = {}
     batch_samples = []
+    
     for i in batch_indices:
         sample_seed = int((seed + i * 2026) % (2**32))
         sample_rng = np.random.RandomState(sample_seed)
@@ -445,10 +454,39 @@ def _generate_ensemble_batch(batch_indices, deciles, seed, min_words, max_words,
         ref_words = 0
         
         for seg in chosen_segs:
-            tokens_all.extend(seg["ctc_tokens"])
-            probs_all.extend(seg["ctc_probs"])
+            if "ctc_tokens" in seg:
+                tokens_all.extend(seg["ctc_tokens"])
+                probs_all.extend(seg["ctc_probs"])
+            elif cache_dir is not None:
+                utt_id = seg["utt_id"]
+                if utt_id not in local_asr_cache:
+                    cache_file = Path(cache_dir) / f"{utt_id}.json"
+                    with open(cache_file, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    local_asr_cache[utt_id] = validate_asr_result(data["result"])
+                    
+                asr_res = local_asr_cache[utt_id]
+                ctc_tokens = asr_res["ctc_tokens"]
+                ctc_probs = asr_res["ctc_probs"]
+                ctc_frame_len = asr_res["ctc_frame_len"]
+                
+                start_t = seg["start_time"]
+                end_t = seg["end_time"]
+                
+                # Slicing CTC frames on-demand in the worker
+                for idx, (tok, prob) in enumerate(zip(ctc_tokens, ctc_probs)):
+                    center_i = (idx + 0.5) * ctc_frame_len
+                    if start_t <= center_i < end_t:
+                        tokens_all.append(tok)
+                        probs_all.append(prob)
+            else:
+                raise ValueError("Segment does not contain CTC data and cache_dir is not specified.")
+                
             edit_errors += seg["edit_errors"]
             ref_words += seg["reference_words"]
+            
+        if len(tokens_all) == 0:
+            continue
             
         accuracy = max(0.0, 1.0 - edit_errors / ref_words)
         
@@ -463,7 +501,7 @@ def _generate_ensemble_batch(batch_indices, deciles, seed, min_words, max_words,
         })
     return batch_samples
 
-def generate_ensemble_samples(segments, sample_count, seed, n_jobs=1, min_words=128, max_words=1024, min_segments=1):
+def generate_ensemble_samples(segments, sample_count, seed, n_jobs=1, min_words=128, max_words=1024, min_segments=1, cache_dir=None):
     """
     Generates sample_count ensemble samples.
     """
@@ -475,14 +513,16 @@ def generate_ensemble_samples(segments, sample_count, seed, n_jobs=1, min_words=
     
     if n_jobs == 1:
         # Avoid multiprocessing overhead entirely for single job
-        samples = _generate_ensemble_batch(range(sample_count), deciles, seed, min_words, max_words, min_segments)
+        samples = _generate_ensemble_batch(range(sample_count), deciles, seed, min_words, max_words, min_segments, cache_dir)
     else:
         # Split sample indices into n_jobs * 4 batches to balance load and minimize IPC overhead
         num_batches = max(1, n_jobs * 4)
         indices_batches = np.array_split(range(sample_count), num_batches)
         
-        results = Parallel(n_jobs=n_jobs, prefer="threads")(
-            delayed(_generate_ensemble_batch)(batch, deciles, seed, min_words, max_words, min_segments)
+        # Run standard multiprocessing (loky) to bypass the GIL and use all cores,
+        # which is memory-efficient since deciles no longer contain ctc_tokens and ctc_probs.
+        results = Parallel(n_jobs=n_jobs)(
+            delayed(_generate_ensemble_batch)(batch, deciles, seed, min_words, max_words, min_segments, cache_dir)
             for batch in indices_batches
         )
         

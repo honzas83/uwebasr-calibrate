@@ -594,11 +594,13 @@ def run_calibration_workflow(args):
         )
         train_samples, train_deciles_count = generate_ensemble_samples(
             train_segments, args.target_ensemble, seed=args.seed, n_jobs=args.jobs,
-            min_words=args.ensemble_min_words, max_words=args.ensemble_max_words, min_segments=args.ensemble_min_segments
+            min_words=args.ensemble_min_words, max_words=args.ensemble_max_words, min_segments=args.ensemble_min_segments,
+            cache_dir=cache_dir
         )
         test_samples, test_deciles_count = generate_ensemble_samples(
             test_segments, args.target_ensemble // 4, seed=args.seed, n_jobs=args.jobs,
-            min_words=args.ensemble_min_words, max_words=args.ensemble_max_words, min_segments=args.ensemble_min_segments
+            min_words=args.ensemble_min_words, max_words=args.ensemble_max_words, min_segments=args.ensemble_min_segments,
+            cache_dir=cache_dir
         )
         
         logger.info("Extracted features for ensemble samples.")
@@ -1129,7 +1131,8 @@ def run_calibration_workflow(args):
                     )
                     ds_test_samples, _ = generate_ensemble_samples(
                         ds_test_segments, args.target_ensemble // 4, seed=args.seed, n_jobs=args.jobs,
-                        min_words=args.ensemble_min_words, max_words=args.ensemble_max_words, min_segments=args.ensemble_min_segments
+                        min_words=args.ensemble_min_words, max_words=args.ensemble_max_words, min_segments=args.ensemble_min_segments,
+                        cache_dir=cache_dir
                     )
                     
                     X_ds_test = np.array([s["features"] for s in ds_test_samples])

@@ -308,7 +308,7 @@ def extract_features(ctc_tokens, ctc_probs, ctc_frame_len=0.04, full_features=Fa
     ]
     
     order = FEATURE_ORDER_FULL if full_features else FEATURE_ORDER_STANDARD
-    return [features[name] for name in order]
+    return [features[name] for name in order], features
 # ----------------------------------------------------
 
 
@@ -390,63 +390,69 @@ def _process_queue(model_url, convert_url, queue, predictor, cmdline_args):
                         raise
 
             # Predict accuracy if predictor is specified
+            # Initialize accuracy info with only the requested keys (with underscores)
             accuracy_info = {
-                "file_name": os.path.basename(fn),
                 "estimated_accuracy": None,
-                "has_ctc": False,
-                "full_features": getattr(predictor, "full_features", False) if predictor else False,
-                "features_count": None,
-                "error": None
+                "words_per_minute": None,
+                "audio_length": None,
+                "speech_ratio": None,
+                "non_speech_ratio": None,
+                "recognized_word_count": None,
+                "expected_error_count": None
             }
 
-            if predictor is not None:
-                try:
-                    res_list = None
-                    if isinstance(data_json, dict) and "result" in data_json:
-                        res_list = data_json["result"]
-                    elif isinstance(data_json, list):
-                        res_list = data_json
-                    else:
-                        raise ValueError("ASR output is not a JSON list or dict with 'result'")
-                    
-                    final_res = None
-                    for res in res_list:
-                        if isinstance(res, dict) and res.get("type") == "asr_result" and not res.get("partial_result", False):
-                            final_res = res
-                            break
-                            
-                    if final_res is None:
-                        raise ValueError("No final asr_result found in UWebASR response")
+            try:
+                res_list = None
+                if isinstance(data_json, dict) and "result" in data_json:
+                    res_list = data_json["result"]
+                elif isinstance(data_json, list):
+                    res_list = data_json
+                else:
+                    raise ValueError("ASR output is not a JSON list or dict with 'result'")
+                
+                final_res = None
+                for res in res_list:
+                    if isinstance(res, dict) and res.get("type") == "asr_result" and not res.get("partial_result", False):
+                        final_res = res
+                        break
                         
-                    if "ctc_tokens" not in final_res or "ctc_probs" not in final_res:
-                        raise ValueError("ASR output is missing ctc_tokens or ctc_probs streams")
-                        
+                if final_res is not None and "ctc_tokens" in final_res and "ctc_probs" in final_res:
                     ctc_tokens = final_res["ctc_tokens"]
                     ctc_probs = final_res["ctc_probs"]
                     ctc_frame_len = final_res.get("ctc_frame_len", 0.04)
                     
+                    total_frames = len(ctc_tokens)
+                    blank_frames = sum(1 for tok in ctc_tokens if tok == "<blk>")
+                    nonblank_frames = total_frames - blank_frames
+                    
                     # Extract local features
-                    feats = extract_features(
+                    use_full_features = getattr(predictor, "full_features", False) if predictor else False
+                    feats, feat_dict = extract_features(
                         ctc_tokens, ctc_probs, ctc_frame_len=ctc_frame_len,
-                        full_features=predictor.full_features
+                        full_features=use_full_features
                     )
                     
-                    # Predict accuracy using the loaded HGBR model
-                    import numpy as np
-                    pred_acc = float(predictor.predict(np.array([feats]))[0])
+                    accuracy_info["words_per_minute"] = float(feat_dict["ctc_wpm"])
+                    accuracy_info["audio_length"] = float(total_frames * ctc_frame_len)
+                    accuracy_info["speech_ratio"] = float(nonblank_frames / total_frames) if total_frames > 0 else 0.0
+                    accuracy_info["non_speech_ratio"] = float(blank_frames / total_frames) if total_frames > 0 else 0.0
+                    accuracy_info["recognized_word_count"] = float(feat_dict["ctc_word_count"])
                     
-                    accuracy_info["estimated_accuracy"] = pred_acc
-                    accuracy_info["has_ctc"] = True
-                    accuracy_info["features_count"] = len(feats)
-                    logger.info("--> Predicted accuracy for %s: %.4f", os.path.basename(fn), pred_acc)
-                    
-                    # Inject estimated accuracy into the JSON before output formatting
-                    if isinstance(data_json, dict):
-                        data_json["estimated_accuracy"] = pred_acc
-                    final_res["estimated_accuracy"] = pred_acc
-                except Exception as ex:
-                    accuracy_info["error"] = str(ex)
-                    logger.warning("--> Cannot estimate accuracy for %s: %s", os.path.basename(fn), ex)
+                    if predictor is not None:
+                        # Predict accuracy using the loaded HGBR model
+                        import numpy as np
+                        pred_acc = float(predictor.predict(np.array([feats]))[0])
+                        
+                        accuracy_info["estimated_accuracy"] = pred_acc
+                        accuracy_info["expected_error_count"] = float(accuracy_info["recognized_word_count"] * (1.0 - pred_acc))
+                        logger.info("--> Predicted accuracy for %s: %.4f", os.path.basename(fn), pred_acc)
+                        
+                        # Inject estimated accuracy into the JSON before output formatting
+                        if isinstance(data_json, dict):
+                            data_json["estimated_accuracy"] = pred_acc
+                        final_res["estimated_accuracy"] = pred_acc
+            except Exception as ex:
+                logger.warning("--> Cannot parse audio metrics or estimate accuracy for %s: %s", os.path.basename(fn), ex)
 
             base_fn = os.path.splitext(fn)[0]
 
@@ -474,17 +480,16 @@ def _process_queue(model_url, convert_url, queue, predictor, cmdline_args):
                         output = convert(convert_url, data_json, format_val, opener=opener if not cmdline_args.no_cookies else None) 
                     fw.write(output)
 
-            # Save separate calibrated metadata JSON file
-            if predictor is not None:
-                acc_fn = base_fn + ".accuracy.json"
-                if cmdline_args.output_dir:
-                    acc_fn = os.path.join(cmdline_args.output_dir, os.path.basename(acc_fn))
-                if os.path.exists(acc_fn) and not cmdline_args.overwrite:
-                    logger.error("Accuracy file already exists: %s, terminating...", acc_fn)
-                    os._exit(-1)
-                with open(acc_fn, "w", encoding="utf-8") as fw:
-                    json.dump(accuracy_info, fw, indent=4)
-                logger.info("Saved accuracy metadata to %s", acc_fn)
+            # Always save separate calibrated metadata JSON file (even if predictor is None)
+            acc_fn = base_fn + ".accuracy.json"
+            if cmdline_args.output_dir:
+                acc_fn = os.path.join(cmdline_args.output_dir, os.path.basename(acc_fn))
+            if os.path.exists(acc_fn) and not cmdline_args.overwrite:
+                logger.error("Accuracy file already exists: %s, terminating...", acc_fn)
+                os._exit(-1)
+            with open(acc_fn, "w", encoding="utf-8") as fw:
+                json.dump(accuracy_info, fw, indent=4)
+            logger.info("Saved accuracy metadata to %s", acc_fn)
 
         except Exception as queue_err:
             logger.exception("Error while processing file: %s", fn)

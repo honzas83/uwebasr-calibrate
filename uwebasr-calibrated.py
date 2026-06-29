@@ -62,6 +62,7 @@ parser.add_argument('--output-dir', type=str, help="Optional output directory fo
 parser.add_argument('--suffix', type=str, help="Optional suffix inserted after basename and before output file extension")
 parser.add_argument('--n-workers', type=int, default=1, help="Number of parallel workers. Defaults to 1.")
 parser.add_argument('--format', type=str, action="append", help="Generate only this format (can be used many times). Defaults to all formats.")
+parser.add_argument('--window-size', type=int, default=256, help="Window size in words for accuracy estimation (defaults to 256, set to 0 to disable windowing).")
 
 logger = logging.getLogger('uwebasr-calibrated')
 
@@ -359,6 +360,75 @@ def convert(convert_url, data_json, format, opener=None):
     with opener.open(req) as r:
         return r.read().decode('utf-8')
 
+def process_windows(ctc_tokens, ctc_probs, ctc_frame_len, word_array, word_times, window_size, predictor, use_full_features):
+    import numpy as np
+    import math
+    
+    total_words = len(word_array)
+    windows_stats = []
+    
+    # If window_size is <= 0, or we don't have enough words/times, treat the whole file as 1 window
+    if window_size <= 0 or total_words <= window_size or len(word_times) < total_words:
+        win_ranges = [(0, total_words)]
+    else:
+        win_ranges = []
+        for i in range(0, total_words, window_size):
+            end_idx = min(i + window_size, total_words)
+            win_ranges.append((i, end_idx))
+            
+    for w_idx, (win_start, win_end) in enumerate(win_ranges):
+        # Determine time boundaries
+        start_t = float(word_times[win_start][0]) if len(word_times) > win_start else 0.0
+        end_t = float(word_times[win_end - 1][1]) if len(word_times) > (win_end - 1) else (len(ctc_tokens) * ctc_frame_len)
+        
+        # Slice CTC
+        win_tokens = []
+        win_probs = []
+        for idx, (tok, prob) in enumerate(zip(ctc_tokens, ctc_probs)):
+            center_i = (idx + 0.5) * ctc_frame_len
+            if start_t <= center_i < end_t:
+                win_tokens.append(tok)
+                win_probs.append(prob)
+                
+        # If slice is empty, fall back to entire sequence to avoid error
+        if len(win_tokens) == 0:
+            win_tokens = ctc_tokens
+            win_probs = ctc_probs
+            
+        # Extract features for window
+        feats, feat_dict = extract_features(
+            win_tokens, win_probs, ctc_frame_len=ctc_frame_len,
+            full_features=use_full_features
+        )
+        
+        n_win_frames = len(win_tokens)
+        blank_frames = sum(1 for tok in win_tokens if tok == "<blk>")
+        nonblank_frames = n_win_frames - blank_frames
+        
+        win_word_count = float(win_end - win_start)
+        
+        win_stat = {
+            "window_idx": w_idx,
+            "start_time": start_t,
+            "end_time": end_t,
+            "word_count": win_word_count,
+            "estimated_accuracy": None,
+            "words_per_minute": float(feat_dict["ctc_wpm"]),
+            "audio_length": float(n_win_frames * ctc_frame_len),
+            "speech_ratio": float(nonblank_frames / n_win_frames) if n_win_frames > 0 else 0.0,
+            "non_speech_ratio": float(blank_frames / n_win_frames) if n_win_frames > 0 else 0.0,
+            "expected_error_count": None
+        }
+        
+        if predictor is not None:
+            pred_acc = float(predictor.predict(np.array([feats]))[0])
+            win_stat["estimated_accuracy"] = pred_acc
+            win_stat["expected_error_count"] = float(win_word_count * (1.0 - pred_acc))
+            
+        windows_stats.append(win_stat)
+        
+    return windows_stats
+
 def _process_queue(model_url, convert_url, queue, predictor, cmdline_args):
     cj = http.cookiejar.CookieJar()
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
@@ -421,36 +491,56 @@ def _process_queue(model_url, convert_url, queue, predictor, cmdline_args):
                     ctc_probs = final_res["ctc_probs"]
                     ctc_frame_len = final_res.get("ctc_frame_len", 0.04)
                     
-                    total_frames = len(ctc_tokens)
-                    blank_frames = sum(1 for tok in ctc_tokens if tok == "<blk>")
-                    nonblank_frames = total_frames - blank_frames
+                    word_array = final_res.get("word_array", [])
+                    word_times = final_res.get("word_times", [])
                     
-                    # Extract local features
+                    # Extract global features (to calculate overall metrics)
                     use_full_features = getattr(predictor, "full_features", False) if predictor else False
-                    feats, feat_dict = extract_features(
+                    feats_global, feat_dict_global = extract_features(
                         ctc_tokens, ctc_probs, ctc_frame_len=ctc_frame_len,
                         full_features=use_full_features
                     )
                     
-                    accuracy_info["words_per_minute"] = float(feat_dict["ctc_wpm"])
+                    total_frames = len(ctc_tokens)
+                    blank_frames = sum(1 for tok in ctc_tokens if tok == "<blk>")
+                    nonblank_frames = total_frames - blank_frames
+                    
+                    accuracy_info["words_per_minute"] = float(feat_dict_global["ctc_wpm"])
                     accuracy_info["audio_length"] = float(total_frames * ctc_frame_len)
                     accuracy_info["speech_ratio"] = float(nonblank_frames / total_frames) if total_frames > 0 else 0.0
                     accuracy_info["non_speech_ratio"] = float(blank_frames / total_frames) if total_frames > 0 else 0.0
-                    accuracy_info["recognized_word_count"] = float(feat_dict["ctc_word_count"])
+                    accuracy_info["recognized_word_count"] = float(len(word_array))
+                    
+                    # Process windowed metrics
+                    windows_stats = process_windows(
+                        ctc_tokens, ctc_probs, ctc_frame_len,
+                        word_array, word_times,
+                        cmdline_args.window_size,
+                        predictor, use_full_features
+                    )
+                    
+                    accuracy_info["windows"] = windows_stats
                     
                     if predictor is not None:
-                        # Predict accuracy using the loaded HGBR model
-                        import numpy as np
-                        pred_acc = float(predictor.predict(np.array([feats]))[0])
+                        # Aggregate predicted accuracy and expected errors
+                        total_expected_errors = sum(win["expected_error_count"] for win in windows_stats if win["expected_error_count"] is not None)
+                        accuracy_info["expected_error_count"] = float(total_expected_errors)
                         
-                        accuracy_info["estimated_accuracy"] = pred_acc
-                        accuracy_info["expected_error_count"] = float(accuracy_info["recognized_word_count"] * (1.0 - pred_acc))
-                        logger.info("--> Predicted accuracy for %s: %.4f", os.path.basename(fn), pred_acc)
+                        if accuracy_info["recognized_word_count"] > 0:
+                            accuracy_info["estimated_accuracy"] = float(
+                                1.0 - total_expected_errors / accuracy_info["recognized_word_count"]
+                            )
+                        else:
+                            accuracy_info["estimated_accuracy"] = 1.0
+                            
+                        accuracy_info["estimated_accuracy"] = max(0.0, min(1.0, accuracy_info["estimated_accuracy"]))
+                        
+                        logger.info("--> Predicted overall accuracy for %s: %.4f", os.path.basename(fn), accuracy_info["estimated_accuracy"])
                         
                         # Inject estimated accuracy into the JSON before output formatting
                         if isinstance(data_json, dict):
-                            data_json["estimated_accuracy"] = pred_acc
-                        final_res["estimated_accuracy"] = pred_acc
+                            data_json["estimated_accuracy"] = accuracy_info["estimated_accuracy"]
+                        final_res["estimated_accuracy"] = accuracy_info["estimated_accuracy"]
             except Exception as ex:
                 logger.warning("--> Cannot parse audio metrics or estimate accuracy for %s: %s", os.path.basename(fn), ex)
 

@@ -137,6 +137,52 @@ A helper script `calibrate_all.sh` is provided to run calibration for all four l
 
 ---
 
+## Calibrated Recognition (Inference)
+
+A standalone script `uwebasr-calibrated.py` is provided for running speech recognition on audio files using the UWebASR API, while simultaneously predicting the word recognition accuracy of the transcript using a trained calibration model.
+
+This script does not depend on the training package and can be run independently as long as `joblib`, `scikit-learn`, and `numpy` are installed.
+
+### Basic Usage
+
+Run recognition and predict accuracy for one or more audio files:
+
+```bash
+python3 uwebasr-calibrated.py \
+  speechcloud/generic/cs/zipformer \
+  audio_file1.wav audio_file2.wav \
+  --calibration-model path/to/model.joblib \
+  --format json \
+  --overwrite
+```
+
+### JSON Accuracy Metadata Output
+
+When a calibration model is specified, the script automatically extracts CTC probability features from the API response and estimates the accuracy. It saves the resulting metrics to a `<filename>.accuracy.json` file containing exactly the following keys (using underscores):
+
+- `estimated_accuracy`: The predicted word-level accuracy (float between 0 and 1, or `null`).
+- `words_per_minute`: Words per minute calculated over the active speech duration.
+- `audio_length`: Total duration of the audio file in seconds.
+- `speech_ratio`: The ratio of active speech frames to total audio frames.
+- `non_speech_ratio`: The ratio of non-speech (silence/blank) frames to total audio frames.
+- `recognized_word_count`: Number of recognized words in the transcript.
+- `expected_error_count`: Estimated number of word errors in the hypothesis transcript.
+
+If the calibration model is not provided, the script still outputs this file with all metadata populated and `estimated_accuracy` set to `null`. If UWebASR fails to return CTC probability streams for a file, all metrics will be set to `null`.
+
+### Options
+
+- `MODEL`: The SpeechCloud model identifier (e.g. `speechcloud/generic/cs/zipformer`).
+- `FN`: Path to one or more input audio files.
+- `--calibration-model PATH`: Path to the trained calibration model (`model.joblib`).
+- `--uwebasr-url URL`: UWebASR service root (defaults to `https://uwebasr.zcu.cz`).
+- `--format FORMAT`: Generate specific output formats (e.g. `json`, `txt`, `s.txt`, `vtt`, `s.vtt`, `jsonl`).
+- `--n-workers N`: Number of parallel workers for concurrent API requests (defaults to 1).
+- `--output-dir DIR`: Optional output directory for saving all transcript and accuracy files.
+- `--overwrite`: Allow overwriting of existing output files.
+
+---
+
 ## LINDAT/CLARIAH-CZ Support & References
 
 UWebASR is developed by the Department of Cybernetics at the University of West Bohemia in Pilsen and is integrated into the [LINDAT/CLARIAH-CZ](https://lindat.cz) research infrastructure.

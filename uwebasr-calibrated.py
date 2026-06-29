@@ -474,6 +474,19 @@ def process_windows(ctc_tokens, ctc_probs, ctc_frame_len, word_array, word_times
         
     return windows_stats
 
+def _copy_accuracy_fields(dst, src):
+    for key in (
+        "estimated_accuracy",
+        "words_per_minute",
+        "audio_length",
+        "speech_ratio",
+        "non_speech_ratio",
+        "recognized_word_count",
+        "expected_error_count",
+    ):
+        if key in src and src[key] is not None:
+            dst[key] = src[key]
+
 def _process_queue(model_url, convert_url, queue, predictor, cmdline_args):
     cj = http.cookiejar.CookieJar()
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
@@ -525,6 +538,18 @@ def _process_queue(model_url, convert_url, queue, predictor, cmdline_args):
                 else:
                     raise ValueError("ASR output is not a JSON list or dict with 'result'")
                 
+                server_accuracy_events = [
+                    res for res in res_list
+                    if isinstance(res, dict) and res.get("type") == "asr_accuracy_estimate"
+                ]
+                server_overall_accuracy = None
+                server_window_accuracy = {}
+                for res in server_accuracy_events:
+                    if "window_idx" in res:
+                        server_window_accuracy[res["window_idx"]] = res
+                    elif res.get("partial_result") is False:
+                        server_overall_accuracy = res
+
                 final_res = None
                 for res in res_list:
                     if isinstance(res, dict) and res.get("type") == "asr_result" and not res.get("partial_result", False):
@@ -591,6 +616,14 @@ def _process_queue(model_url, convert_url, queue, predictor, cmdline_args):
                         if isinstance(data_json, dict):
                             data_json["estimated_accuracy"] = accuracy_info["estimated_accuracy"]
                         final_res["estimated_accuracy"] = accuracy_info["estimated_accuracy"]
+                    else:
+                        for win_stat in windows_stats:
+                            server_win_stat = server_window_accuracy.get(win_stat["window_idx"])
+                            if server_win_stat is not None:
+                                _copy_accuracy_fields(win_stat, server_win_stat)
+
+                        if server_overall_accuracy is not None:
+                            _copy_accuracy_fields(accuracy_info, server_overall_accuracy)
             except Exception as ex:
                 logger.warning("--> Cannot parse audio metrics or estimate accuracy for %s: %s", os.path.basename(fn), ex)
 

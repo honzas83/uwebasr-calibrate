@@ -98,6 +98,48 @@ def compute_run_lengths(mask):
         nonblank_runs.append(current_len)
     return blank_runs, nonblank_runs
 
+
+def _speech_duration_from_word_times(word_times, start_time, end_time):
+    audio_length = max(0.0, float(end_time) - float(start_time))
+    if audio_length <= 0.0:
+        return 0.0, 0.0
+
+    intervals = []
+    for word_time in word_times:
+        try:
+            word_start, word_end = word_time
+            word_start = max(float(word_start), float(start_time))
+            word_end = min(float(word_end), float(end_time))
+        except (TypeError, ValueError):
+            continue
+
+        if word_end > word_start:
+            intervals.append((word_start, word_end))
+
+    if not intervals:
+        return 0.0, audio_length
+
+    intervals.sort()
+    merged = []
+    for word_start, word_end in intervals:
+        if not merged or word_start > merged[-1][1]:
+            merged.append([word_start, word_end])
+        else:
+            merged[-1][1] = max(merged[-1][1], word_end)
+
+    speech_duration = sum(word_end - word_start for word_start, word_end in merged)
+    return speech_duration, audio_length
+
+
+def _speech_ratios_from_word_times(word_times, start_time, end_time):
+    speech_duration, audio_length = _speech_duration_from_word_times(word_times, start_time, end_time)
+    if audio_length <= 0.0:
+        return 0.0, 0.0
+
+    speech_ratio = min(1.0, max(0.0, speech_duration / audio_length))
+    return speech_ratio, 1.0 - speech_ratio
+
+
 def extract_features(ctc_tokens, ctc_probs, ctc_frame_len=0.04, full_features=False):
     import math
     import numpy as np
@@ -401,12 +443,15 @@ def process_windows(ctc_tokens, ctc_probs, ctc_frame_len, word_array, word_times
             full_features=use_full_features
         )
         
-        n_win_frames = len(win_tokens)
-        blank_frames = sum(1 for tok in win_tokens if tok == "<blk>")
-        nonblank_frames = n_win_frames - blank_frames
-        
         win_word_count = float(win_end - win_start)
-        
+        win_audio_length = float(len(win_tokens) * ctc_frame_len)
+        win_word_times = word_times[win_start:win_end]
+        speech_ratio, non_speech_ratio = _speech_ratios_from_word_times(
+            win_word_times,
+            start_t,
+            start_t + win_audio_length,
+        )
+
         win_stat = {
             "window_idx": w_idx,
             "start_time": start_t,
@@ -414,9 +459,9 @@ def process_windows(ctc_tokens, ctc_probs, ctc_frame_len, word_array, word_times
             "word_count": win_word_count,
             "estimated_accuracy": None,
             "words_per_minute": float(feat_dict["ctc_wpm"]),
-            "audio_length": float(n_win_frames * ctc_frame_len),
-            "speech_ratio": float(nonblank_frames / n_win_frames) if n_win_frames > 0 else 0.0,
-            "non_speech_ratio": float(blank_frames / n_win_frames) if n_win_frames > 0 else 0.0,
+            "audio_length": win_audio_length,
+            "speech_ratio": speech_ratio,
+            "non_speech_ratio": non_speech_ratio,
             "expected_error_count": None
         }
         
@@ -502,14 +547,19 @@ def _process_queue(model_url, convert_url, queue, predictor, cmdline_args):
                     )
                     
                     total_frames = len(ctc_tokens)
-                    blank_frames = sum(1 for tok in ctc_tokens if tok == "<blk>")
-                    nonblank_frames = total_frames - blank_frames
+                    global_audio_length = float(total_frames * ctc_frame_len)
+                    recognized_word_count = float(len(word_array))
+                    speech_ratio, non_speech_ratio = _speech_ratios_from_word_times(
+                        word_times,
+                        0.0,
+                        global_audio_length,
+                    )
                     
                     accuracy_info["words_per_minute"] = float(feat_dict_global["ctc_wpm"])
-                    accuracy_info["audio_length"] = float(total_frames * ctc_frame_len)
-                    accuracy_info["speech_ratio"] = float(nonblank_frames / total_frames) if total_frames > 0 else 0.0
-                    accuracy_info["non_speech_ratio"] = float(blank_frames / total_frames) if total_frames > 0 else 0.0
-                    accuracy_info["recognized_word_count"] = float(len(word_array))
+                    accuracy_info["audio_length"] = global_audio_length
+                    accuracy_info["speech_ratio"] = speech_ratio
+                    accuracy_info["non_speech_ratio"] = non_speech_ratio
+                    accuracy_info["recognized_word_count"] = recognized_word_count
                     
                     # Process windowed metrics
                     windows_stats = process_windows(

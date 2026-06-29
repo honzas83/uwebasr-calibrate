@@ -158,15 +158,26 @@ python3 uwebasr-calibrated.py \
 
 ### JSON Accuracy Metadata Output
 
-When a calibration model is specified, the script automatically extracts CTC probability features from the API response and estimates the accuracy. It saves the resulting metrics to a `<filename>.accuracy.json` file containing exactly the following keys (using underscores):
+By default, the script partitions the recording into word-aligned windows of `--window-size` words (default is 256). It extracts features and estimates accuracy for each window separately, then aggregates them to compute the overall metrics.
 
-- `estimated_accuracy`: The predicted word-level accuracy (float between 0 and 1, or `null`).
-- `words_per_minute`: Words per minute calculated over the active speech duration.
+The script saves the resulting metrics to a `<filename>.accuracy.json` file containing the following keys:
+
+- `estimated_accuracy`: The overall predicted word-level accuracy (computed as a word-count-weighted average of window accuracies, or `null`).
+- `words_per_minute`: Global words per minute over the active speech duration.
 - `audio_length`: Total duration of the audio file in seconds.
 - `speech_ratio`: The ratio of active speech frames to total audio frames.
 - `non_speech_ratio`: The ratio of non-speech (silence/blank) frames to total audio frames.
-- `recognized_word_count`: Number of recognized words in the transcript.
-- `expected_error_count`: Estimated number of word errors in the hypothesis transcript.
+- `recognized_word_count`: Total number of recognized words in the transcript.
+- `expected_error_count`: Estimated number of word errors in the transcript (summed across all windows).
+- `windows`: A list of dictionaries, where each entry contains details for one window:
+  - `window_idx`: Index of the window (0-indexed).
+  - `start_time` / `end_time`: Time boundaries of the window in seconds.
+  - `word_count`: Number of words in the window.
+  - `estimated_accuracy`: Predicted accuracy for this window.
+  - `words_per_minute`: Words per minute for this window.
+  - `audio_length`: Active speech duration of the window in seconds.
+  - `speech_ratio` / `non_speech_ratio`: Speech and non-speech ratios inside the window frame boundaries.
+  - `expected_error_count`: Estimated number of word errors in this window.
 
 If the calibration model is not provided, the script still outputs this file with all metadata populated and `estimated_accuracy` set to `null`. If UWebASR fails to return CTC probability streams for a file, all metrics will be set to `null`.
 
@@ -175,6 +186,7 @@ If the calibration model is not provided, the script still outputs this file wit
 - `MODEL`: The SpeechCloud model identifier (e.g. `speechcloud/generic/cs/zipformer`).
 - `FN`: Path to one or more input audio files.
 - `--calibration-model PATH`: Path to the trained calibration model (`model.joblib`).
+- `--window-size N`: Window size in words for accuracy estimation (defaults to 256, set to 0 to evaluate the entire file as a single window).
 - `--uwebasr-url URL`: UWebASR service root (defaults to `https://uwebasr.zcu.cz`).
 - `--format FORMAT`: Generate specific output formats (e.g. `json`, `txt`, `s.txt`, `vtt`, `s.vtt`, `jsonl`).
 - `--n-workers N`: Number of parallel workers for concurrent API requests (defaults to 1).
